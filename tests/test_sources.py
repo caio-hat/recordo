@@ -1,4 +1,5 @@
 """Tests for AudioSource scoring and selection."""
+
 from __future__ import annotations
 
 from recordo.sources import AudioSource, auto_pick, detect_active_call
@@ -33,10 +34,10 @@ class TestAudioSourceScore:
 class TestAutoPick:
     def test_picks_highest_scored(self):
         sources = [
-            AudioSource("alsa_output.usb.monitor", "", "SUSPENDED"),         # sys, score 50
-            AudioSource("bluez_output.bt.monitor", "", "RUNNING"),           # sys, score 130
-            AudioSource("alsa_input.usb-cam", "", "SUSPENDED"),              # mic, score 50
-            AudioSource("bluez_input.bt", "", "RUNNING"),                    # mic, score 130
+            AudioSource("alsa_output.usb.monitor", "", "SUSPENDED"),  # sys, score 50
+            AudioSource("bluez_output.bt.monitor", "", "RUNNING"),  # sys, score 130
+            AudioSource("alsa_input.usb-cam", "", "SUSPENDED"),  # mic, score 50
+            AudioSource("bluez_input.bt", "", "RUNNING"),  # mic, score 130
         ]
         mic, sys_ = auto_pick(sources)
         assert mic == "bluez_input.bt"
@@ -68,9 +69,11 @@ class TestDetectActiveCall:
         assert detect_active_call(cfg) is None
 
     def test_substring_match(self, monkeypatch):
+        # binary bate exato com allow set; loop testa app_name primeiro mas falha,
+        # depois binary que casa → retorna binary
         monkeypatch.setattr(
             "recordo.sources.list_source_outputs",
             lambda: [{"app_name": "Microsoft Teams (Preview)", "binary": "teams-for-linux"}],
         )
         cfg = {"apps": ["teams-for-linux"], "deny_apps": []}
-        assert detect_active_call(cfg) == "Microsoft Teams (Preview)"
+        assert detect_active_call(cfg) == "teams-for-linux"

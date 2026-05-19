@@ -1,4 +1,5 @@
 """python -m recordo → cli.main()"""
+
 import sys
 
 from .cli import main

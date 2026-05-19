@@ -1,16 +1,14 @@
 """Tests for ffmpeg command builders (puros, sem invocação)."""
+
 from __future__ import annotations
 
 from pathlib import Path
-
-import pytest
 
 from recordo.ffmpeg_cmds import build_capture_cmd, build_concat_cmd, build_merge_cmd
 
 
 def test_capture_uses_libopus(tmp_path: Path):
-    cmd = build_capture_cmd("alsa_input.x", tmp_path / "out.opus",
-                            max_seconds=1800, bitrate="32k")
+    cmd = build_capture_cmd("alsa_input.x", tmp_path / "out.opus", max_seconds=1800, bitrate="32k")
     assert "libopus" in cmd
     assert "-b:a" in cmd
     assert "32k" in cmd
@@ -19,8 +17,7 @@ def test_capture_uses_libopus(tmp_path: Path):
 
 
 def test_capture_pulse_input(tmp_path: Path):
-    cmd = build_capture_cmd("alsa_input.foo", tmp_path / "out.opus",
-                            max_seconds=300, bitrate="48k")
+    cmd = build_capture_cmd("alsa_input.foo", tmp_path / "out.opus", max_seconds=300, bitrate="48k")
     idx = cmd.index("-i")
     assert cmd[idx + 1] == "alsa_input.foo"
     assert cmd[idx - 1] == "pulse"

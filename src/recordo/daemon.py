@@ -1,4 +1,5 @@
 """Daemon asyncio: socket UNIX + watchdogs + auto-detect."""
+
 from __future__ import annotations
 
 import asyncio
@@ -9,18 +10,22 @@ import signal
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Optional
 
 from .config import (
-    DEFAULT_MAX_SEGMENT, HARD_CAP_SECONDS, REMINDER_INTERVAL,
-    SILENCE_CHECK_INTERVAL, SILENCE_MAX_SECONDS, SILENCE_THRESHOLD_DB,
-    SOCKET_PATH, load_auto_detect_config,
+    DEFAULT_MAX_SEGMENT,
+    HARD_CAP_SECONDS,
+    REMINDER_INTERVAL,
+    SILENCE_CHECK_INTERVAL,
+    SILENCE_MAX_SECONDS,
+    SILENCE_THRESHOLD_DB,
+    SOCKET_PATH,
+    load_auto_detect_config,
 )
 from .notify import notify
+from .pipeline import post_pipeline
 from .recorder import Mark, Recorder, make_session, set_recorder_ref, write_report
 from .sources import auto_pick, detect_active_call, list_sources, measure_mic_db
 from .subject import detect_subject
-from .pipeline import post_pipeline
 
 log = logging.getLogger(__name__)
 
@@ -28,9 +33,16 @@ log = logging.getLogger(__name__)
 class Daemon:
     """Loop principal do daemon, dispatcher de comandos via JSON-lines."""
 
-    def __init__(self, *, output_dir: Path, bitrate: str, layout: str,
-                 max_segment: int = DEFAULT_MAX_SEGMENT,
-                 whisper_model: str = "base", language: str = "pt"):
+    def __init__(
+        self,
+        *,
+        output_dir: Path,
+        bitrate: str,
+        layout: str,
+        max_segment: int = DEFAULT_MAX_SEGMENT,
+        whisper_model: str = "base",
+        language: str = "pt",
+    ):
         self.output_dir = output_dir
         self.bitrate = bitrate
         self.layout = layout
@@ -39,7 +51,7 @@ class Daemon:
         self.language = language
 
         self.state = None  # type: ignore[var-annotated]
-        self.recorder: Optional[Recorder] = None
+        self.recorder: Recorder | None = None
         self.session_start_mono: float = 0.0
         self.marks: list[Mark] = []
         self.last_stop_mono: float = 0.0
@@ -57,8 +69,7 @@ class Daemon:
         server = await asyncio.start_unix_server(self._handle_client, path=str(SOCKET_PATH))
         os.chmod(SOCKET_PATH, 0o600)
         log.info("daemon escutando em %s (pid=%d)", SOCKET_PATH, os.getpid())
-        notify("Recordo iniciado", "Daemon ativo · Super+R para gravar",
-               icon="media-record", transient=True)
+        notify("Recordo iniciado", "Daemon ativo · Super+R para gravar", icon="media-record", transient=True)
 
         self._tasks.append(asyncio.create_task(self._watchdog_loop(), name="watchdog"))
         self._tasks.append(asyncio.create_task(self._auto_detect_loop(), name="auto-detect"))
@@ -84,12 +95,10 @@ class Daemon:
             SOCKET_PATH.unlink()
         except FileNotFoundError:
             pass
-        notify("Recordo encerrado", "Daemon parado.",
-               icon="media-playback-stop", transient=True)
+        notify("Recordo encerrado", "Daemon parado.", icon="media-playback-stop", transient=True)
 
     # ── socket handler ─────────────────────────────────────────────────────
-    async def _handle_client(self, reader: asyncio.StreamReader,
-                             writer: asyncio.StreamWriter) -> None:
+    async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             raw = await asyncio.wait_for(reader.readline(), timeout=5)
             if not raw:
@@ -116,7 +125,7 @@ class Daemon:
             else:
                 try:
                     resp = await handler(req)
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     log.exception("erro em comando %s", cmd)
                     resp = {"ok": False, "error": str(e)}
 
@@ -126,7 +135,7 @@ class Daemon:
             writer.close()
             try:
                 await writer.wait_closed()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
 
     # ── comandos ───────────────────────────────────────────────────────────
@@ -137,8 +146,7 @@ class Daemon:
 
     async def _cmd_start(self, req: dict) -> dict:
         if self.recorder and self.recorder.recording:
-            return {"ok": False, "error": "já gravando",
-                    "session_id": self.state.session_id}
+            return {"ok": False, "error": "já gravando", "session_id": self.state.session_id}
 
         subject = req.get("subject") or detect_subject()
         auto_started = bool(req.get("auto", False))
@@ -148,8 +156,9 @@ class Daemon:
         if not mic or not sys_:
             return {"ok": False, "error": "fontes mic/sys não detectadas"}
 
-        state = make_session(subject, mic, sys_, bitrate=self.bitrate,
-                             layout=self.layout, base_dir=self.output_dir)
+        state = make_session(
+            subject, mic, sys_, bitrate=self.bitrate, layout=self.layout, base_dir=self.output_dir
+        )
         state.auto_started = auto_started
         state.save()
 
@@ -166,8 +175,7 @@ class Daemon:
 
         title = "🎙️ Auto-gravando" if auto_started else "🔴 Gravando"
         notify(title, f"{subject}\nSuper+R para parar")
-        log.info("start session=%s subject=%s auto=%s",
-                 state.session_id, subject, auto_started)
+        log.info("start session=%s subject=%s auto=%s", state.session_id, subject, auto_started)
         return {"ok": True, "session_id": state.session_id, "subject": subject}
 
     async def _cmd_stop(self, req: dict) -> dict:
@@ -186,17 +194,23 @@ class Daemon:
             target = await loop.run_in_executor(
                 None,
                 lambda: post_pipeline(
-                    state, final, self.marks,
-                    whisper_model=self.whisper_model, language=self.language,
+                    state,
+                    final,
+                    self.marks,
+                    whisper_model=self.whisper_model,
+                    language=self.language,
                 ),
             )
 
         if target:
-            notify("⏹ Salvo · transcrevendo…", f"~/Notas/{target.name}/",
-                   icon="media-playback-stop", transient=True)
+            notify(
+                "⏹ Salvo · transcrevendo…",
+                f"~/Notas/{target.name}/",
+                icon="media-playback-stop",
+                transient=True,
+            )
         else:
-            notify("⏹ Encerrado", "Nenhum áudio gerado.",
-                   icon="dialog-warning", urgency="critical")
+            notify("⏹ Encerrado", "Nenhum áudio gerado.", icon="dialog-warning", urgency="critical")
 
         self.last_stop_mono = time.monotonic()
         self.recorder = None
@@ -208,26 +222,36 @@ class Daemon:
             return {"ok": False, "error": "não há gravação ativa"}
         ts = time.monotonic() - self.session_start_mono
         from datetime import datetime
-        m = Mark(ts_seconds=round(ts, 2),
-                 iso_time=datetime.now().isoformat(timespec="seconds"),
-                 text=req.get("text", "")[:200])
+
+        m = Mark(
+            ts_seconds=round(ts, 2),
+            iso_time=datetime.now().isoformat(timespec="seconds"),
+            text=req.get("text", "")[:200],
+        )
         self.marks.append(m)
         self.state.marks = self.marks
         self.state.save()
-        notify("📍 Marca registrada",
-               f"[{int(ts//60):02d}:{int(ts%60):02d}] {m.text or '(sem texto)'}",
-               icon="bookmark-new", transient=True)
+        notify(
+            "📍 Marca registrada",
+            f"[{int(ts // 60):02d}:{int(ts % 60):02d}] {m.text or '(sem texto)'}",
+            icon="bookmark-new",
+            transient=True,
+        )
         return {"ok": True, "mark": asdict(m)}
 
     async def _cmd_status(self, req: dict) -> dict:
         if not self.recorder or not self.recorder.recording:
-            return {"ok": True, "recording": False,
-                    "since_last_stop_seconds":
-                        int(time.monotonic() - self.last_stop_mono)
-                        if self.last_stop_mono else None}
+            return {
+                "ok": True,
+                "recording": False,
+                "since_last_stop_seconds": int(time.monotonic() - self.last_stop_mono)
+                if self.last_stop_mono
+                else None,
+            }
         elapsed = time.monotonic() - self.session_start_mono
         return {
-            "ok": True, "recording": True,
+            "ok": True,
+            "recording": True,
             "session_id": self.state.session_id,
             "subject": self.state.subject,
             "elapsed_seconds": int(elapsed),
@@ -252,9 +276,11 @@ class Daemon:
 
             if elapsed >= HARD_CAP_SECONDS:
                 log.warning("hard cap atingido — stop forçado")
-                notify("⛔ Hard cap atingido",
-                       f"Gravação parada (limite {HARD_CAP_SECONDS//3600}h).",
-                       urgency="critical")
+                notify(
+                    "⛔ Hard cap atingido",
+                    f"Gravação parada (limite {HARD_CAP_SECONDS // 3600}h).",
+                    urgency="critical",
+                )
                 await self._cmd_stop({})
                 continue
 
@@ -267,22 +293,31 @@ class Daemon:
             if now - self._reminder_last_mono >= REMINDER_INTERVAL:
                 self._reminder_last_mono = now
                 mins = int(elapsed / 60)
-                notify("🔴 ainda gravando", f"{mins}min · {self.state.subject}",
-                       icon="media-record", transient=True)
+                notify(
+                    "🔴 ainda gravando",
+                    f"{mins}min · {self.state.subject}",
+                    icon="media-record",
+                    transient=True,
+                )
 
             if now - last_silence_check >= SILENCE_CHECK_INTERVAL:
                 last_silence_check = now
                 db = await asyncio.get_event_loop().run_in_executor(
-                    None, measure_mic_db, self.state.mic_source, 2,
+                    None,
+                    measure_mic_db,
+                    self.state.mic_source,
+                    2,
                 )
                 if db is not None:
                     if db < SILENCE_THRESHOLD_DB:
                         self.silence_streak += SILENCE_CHECK_INTERVAL
                         log.debug("silêncio: %.1fdB streak=%.0fs", db, self.silence_streak)
                         if self.silence_streak >= SILENCE_MAX_SECONDS:
-                            notify("🟡 Silêncio prolongado",
-                                   f"Mic abaixo de {SILENCE_THRESHOLD_DB}dB "
-                                   f"por {SILENCE_MAX_SECONDS//60}min — parando.")
+                            notify(
+                                "🟡 Silêncio prolongado",
+                                f"Mic abaixo de {SILENCE_THRESHOLD_DB}dB "
+                                f"por {SILENCE_MAX_SECONDS // 60}min — parando.",
+                            )
                             await self._cmd_stop({})
                     else:
                         self.silence_streak = 0.0
@@ -299,8 +334,7 @@ class Daemon:
             if self.last_stop_mono and (time.monotonic() - self.last_stop_mono) < quiet:
                 continue
 
-            app = await asyncio.get_event_loop().run_in_executor(
-                None, detect_active_call, cfg)
+            app = await asyncio.get_event_loop().run_in_executor(None, detect_active_call, cfg)
             if not app:
                 self._auto_detect_first_seen.clear()
                 continue

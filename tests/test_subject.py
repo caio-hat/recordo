@@ -1,4 +1,5 @@
 """Tests for subject extraction heuristics."""
+
 from __future__ import annotations
 
 from recordo.subject import detect_subject_from_title, safe_subject
@@ -9,7 +10,8 @@ class TestSafeSubject:
         assert safe_subject("Reunião X") == "Reunião_X"
 
     def test_strips_special(self):
-        assert safe_subject("Daily / Sync!") == "Daily__Sync"
+        # "/" e "!" removidos, espaços viram underscore (e múltiplos collapsem)
+        assert safe_subject("Daily / Sync!") == "Daily_Sync"
 
     def test_empty_fallback(self):
         assert safe_subject("") == "Gravacao"

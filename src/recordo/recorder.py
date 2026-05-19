@@ -1,4 +1,5 @@
 """Modelo de dados (Segment, Mark, SessionState) + Recorder."""
+
 from __future__ import annotations
 
 import atexit
@@ -13,7 +14,6 @@ import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from .config import LOCKFILE, SESSION_META
 from .ffmpeg_cmds import build_capture_cmd, build_concat_cmd, build_merge_cmd
@@ -63,7 +63,7 @@ class SessionState:
         )
 
     @classmethod
-    def load(cls, dir_: Path) -> "SessionState":
+    def load(cls, dir_: Path) -> SessionState:
         data = json.loads((dir_ / SESSION_META).read_text())
         segs = [Segment(**s) for s in data.pop("segments", [])]
         marks = [Mark(**m) for m in data.pop("marks", [])]
@@ -79,10 +79,10 @@ class Recorder:
         self.max_segment = max_segment
         self.layout = layout
         self.dir = Path(state.output_dir)
-        self.proc_sys: Optional[subprocess.Popen] = None
-        self.proc_mic: Optional[subprocess.Popen] = None
+        self.proc_sys: subprocess.Popen | None = None
+        self.proc_mic: subprocess.Popen | None = None
         self.seg_start_mono: float = 0.0
-        self.current: Optional[Segment] = None
+        self.current: Segment | None = None
         self.recording = False
 
     def start_segment(self) -> None:
@@ -99,10 +99,18 @@ class Recorder:
         )
         self.current = seg
 
-        cmd_sys = build_capture_cmd(self.state.sys_source, Path(seg.sys_file),
-                                    max_seconds=self.max_segment, bitrate=self.state.bitrate)
-        cmd_mic = build_capture_cmd(self.state.mic_source, Path(seg.mic_file),
-                                    max_seconds=self.max_segment, bitrate=self.state.bitrate)
+        cmd_sys = build_capture_cmd(
+            self.state.sys_source,
+            Path(seg.sys_file),
+            max_seconds=self.max_segment,
+            bitrate=self.state.bitrate,
+        )
+        cmd_mic = build_capture_cmd(
+            self.state.mic_source,
+            Path(seg.mic_file),
+            max_seconds=self.max_segment,
+            bitrate=self.state.bitrate,
+        )
 
         log.info("iniciando segmento %d", idx)
         self.proc_sys = subprocess.Popen(cmd_sys, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -110,7 +118,7 @@ class Recorder:
         self.seg_start_mono = time.monotonic()
         self.recording = True
 
-    def _terminate(self, proc: Optional[subprocess.Popen]) -> None:
+    def _terminate(self, proc: subprocess.Popen | None) -> None:
         if not proc or proc.poll() is not None:
             return
         try:
@@ -124,7 +132,7 @@ class Recorder:
             except subprocess.TimeoutExpired:
                 proc.kill()
 
-    def stop_segment(self) -> Optional[Segment]:
+    def stop_segment(self) -> Segment | None:
         if not self.recording or not self.current:
             return None
         self._terminate(self.proc_sys)
@@ -145,8 +153,9 @@ class Recorder:
         return seg
 
     def _merge(self, seg: Segment) -> bool:
-        cmd = build_merge_cmd(Path(seg.sys_file), Path(seg.mic_file),
-                              Path(seg.merged_file), self.layout, self.state.bitrate)
+        cmd = build_merge_cmd(
+            Path(seg.sys_file), Path(seg.mic_file), Path(seg.merged_file), self.layout, self.state.bitrate
+        )
         if not cmd:
             seg.status = "empty"
             log.warning("segmento %d sem áudio (mic e sys vazios)", seg.index)
@@ -159,7 +168,7 @@ class Recorder:
             log.error("erro merge segmento %d: %s", seg.index, e.stderr)
             return False
 
-    def watchdog_tick(self) -> Optional[str]:
+    def watchdog_tick(self) -> str | None:
         """Chamado periodicamente. Retorna 'cycled'/'died' se algo aconteceu."""
         if not self.recording:
             return None
@@ -180,12 +189,15 @@ class Recorder:
             return "died"
         return None
 
-    def finalize(self) -> Optional[Path]:
+    def finalize(self) -> Path | None:
         """Encerra gravação e concatena segmentos válidos."""
         if self.recording:
             self.stop_segment()
-        merged = [Path(s.merged_file) for s in self.state.segments
-                  if s.status == "merged" and Path(s.merged_file).exists()]
+        merged = [
+            Path(s.merged_file)
+            for s in self.state.segments
+            if s.status == "merged" and Path(s.merged_file).exists()
+        ]
         if not merged:
             log.warning("nenhum segmento válido — nada para concatenar")
             return None
@@ -204,36 +216,41 @@ class Recorder:
 
 
 # ── Helpers de sessão ───────────────────────────────────────────────────────
-def make_session(subject: str, mic: str, sys_: str, *, bitrate: str,
-                 layout: str, base_dir: Path) -> SessionState:
+def make_session(
+    subject: str, mic: str, sys_: str, *, bitrate: str, layout: str, base_dir: Path
+) -> SessionState:
     safe = re.sub(r"[^A-Za-z0-9 ]+", "", subject).strip().replace(" ", "_") or "Gravacao"
     sid = datetime.now().strftime("%Y%m%d_%H%M%S")
     out = base_dir / f"{safe}_{sid}"
     out.mkdir(parents=True, exist_ok=True)
     return SessionState(
-        subject=subject, session_id=sid,
+        subject=subject,
+        session_id=sid,
         started_at=datetime.now().isoformat(timespec="seconds"),
-        output_dir=str(out), mic_source=mic, sys_source=sys_,
-        codec="opus", bitrate=bitrate, layout=layout,
+        output_dir=str(out),
+        mic_source=mic,
+        sys_source=sys_,
+        codec="opus",
+        bitrate=bitrate,
+        layout=layout,
     )
 
 
-def find_resumable(base_dir: Path) -> Optional[Path]:
+def find_resumable(base_dir: Path) -> Path | None:
     if not base_dir.exists():
         return None
-    candidates = sorted(base_dir.glob("*/session.json"),
-                        key=lambda p: p.stat().st_mtime, reverse=True)
+    candidates = sorted(base_dir.glob("*/session.json"), key=lambda p: p.stat().st_mtime, reverse=True)
     for c in candidates:
         try:
             data = json.loads(c.read_text())
             if not data.get("finished"):
                 return c.parent
-        except Exception:  # noqa: BLE001
+        except Exception:
             continue
     return None
 
 
-def write_report(state: SessionState, final: Optional[Path]) -> None:
+def write_report(state: SessionState, final: Path | None) -> None:
     rep = Path(state.output_dir) / f"{state.session_id}_report.md"
     lines = [
         f"# Relatório — {state.subject}",
@@ -249,13 +266,13 @@ def write_report(state: SessionState, final: Optional[Path]) -> None:
         "|---|---|---|---|---|",
     ]
     for s in state.segments:
-        size_h = f"{s.size_bytes/1024:.1f} KB" if s.size_bytes else "-"
+        size_h = f"{s.size_bytes / 1024:.1f} KB" if s.size_bytes else "-"
         lines.append(f"| {s.index} | {s.started_at} | {s.duration:.1f} | {size_h} | {s.status} |")
     rep.write_text("\n".join(lines) + "\n")
 
 
 # ── Lockfile + sinais (modo standalone CLI) ─────────────────────────────────
-_recorder_ref: Optional[Recorder] = None
+_recorder_ref: Recorder | None = None
 
 
 def acquire_lock() -> None:
@@ -273,7 +290,7 @@ def acquire_lock() -> None:
     atexit.register(LOCKFILE.unlink, missing_ok=True)
 
 
-def set_recorder_ref(rec: Optional[Recorder]) -> None:
+def set_recorder_ref(rec: Recorder | None) -> None:
     global _recorder_ref
     _recorder_ref = rec
 

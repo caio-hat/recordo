@@ -1,4 +1,5 @@
 """Wrapper notify-send com replace-id (padrão mute.sh do user)."""
+
 from __future__ import annotations
 
 import logging
@@ -9,9 +10,15 @@ from .config import NOTIF_FILE
 log = logging.getLogger(__name__)
 
 
-def notify(title: str, body: str = "", *, urgency: str = "normal",
-           icon: str = "media-record", replace: bool = True,
-           transient: bool = False) -> None:
+def notify(
+    title: str,
+    body: str = "",
+    *,
+    urgency: str = "normal",
+    icon: str = "media-record",
+    replace: bool = True,
+    transient: bool = False,
+) -> None:
     """Envia notificação desktop. Reusa ID anterior pra evitar empilhar."""
     cmd = ["notify-send", "-u", urgency, "-a", "Recordo", "-i", icon, "-p"]
     if transient:
@@ -19,7 +26,7 @@ def notify(title: str, body: str = "", *, urgency: str = "normal",
     if replace and NOTIF_FILE.exists():
         try:
             cmd += ["-r", NOTIF_FILE.read_text().strip()]
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
     cmd += [title, body]
     try:

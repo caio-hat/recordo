@@ -23,12 +23,12 @@ if [[ -x "$VENV/bin/python" ]]; then
     PYVER=$("$VENV/bin/python" --version 2>&1)
     ok "$VENV → $PYVER"
     if "$VENV/bin/python" -c "import recordo; print('recordo', recordo.__version__)" 2>/dev/null; then
-        ok "$($VENV/bin/python -c 'import recordo; print("recordo", recordo.__version__)')"
+        ok "$("$VENV"/bin/python -c 'import recordo; print("recordo", recordo.__version__)')"
     else
         err "pacote 'recordo' não importável no venv"
     fi
     if "$VENV/bin/python" -c "import faster_whisper" 2>/dev/null; then
-        ok "faster-whisper $($VENV/bin/python -c 'import faster_whisper; print(faster_whisper.__version__)')"
+        ok "faster-whisper $("$VENV"/bin/python -c 'import faster_whisper; print(faster_whisper.__version__)')"
     else
         warn "faster-whisper não instalado (lazy install na 1ª transcrição)"
     fi
@@ -85,7 +85,7 @@ if [[ -f "$HOME/.config/recordo/auto-detect.json" ]]; then
     ENA=$(jq -r '.enabled' "$HOME/.config/recordo/auto-detect.json" 2>/dev/null)
     ok "auto-detect.json (enabled=$ENA)"
 else
-    warn "~/.config/recordo/auto-detect.json ausente"
+    warn "$HOME/.config/recordo/auto-detect.json ausente"
 fi
 
 sec "Notas dir"

@@ -1,4 +1,5 @@
 """Tests for config defaults and XDG paths."""
+
 from __future__ import annotations
 
 import json
@@ -15,8 +16,14 @@ def test_xdg_paths_defined():
 
 def test_default_auto_detect_keys():
     keys = set(config.DEFAULT_AUTO_DETECT.keys())
-    assert {"enabled", "apps", "deny_apps", "min_mic_duration_seconds",
-            "quiet_period_after_stop_minutes", "poll_interval_seconds"} <= keys
+    assert {
+        "enabled",
+        "apps",
+        "deny_apps",
+        "min_mic_duration_seconds",
+        "quiet_period_after_stop_minutes",
+        "poll_interval_seconds",
+    } <= keys
 
 
 def test_default_auto_detect_disabled():

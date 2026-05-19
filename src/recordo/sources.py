@@ -1,11 +1,11 @@
 """Detecção de fontes PulseAudio/PipeWire (pactl) e clients de mic."""
+
 from __future__ import annotations
 
 import os
 import re
 import subprocess
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -47,7 +47,9 @@ def list_sources() -> list[AudioSource]:
     try:
         out = subprocess.check_output(
             ["pactl", "list", "sources"],
-            text=True, env=_pactl_env(), timeout=5,
+            text=True,
+            env=_pactl_env(),
+            timeout=5,
         )
     except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return []
@@ -70,7 +72,7 @@ def list_sources() -> list[AudioSource]:
     return sources
 
 
-def auto_pick(sources: list[AudioSource]) -> tuple[Optional[str], Optional[str]]:
+def auto_pick(sources: list[AudioSource]) -> tuple[str | None, str | None]:
     """Escolhe mic + sys por score (Bluetooth > USB > builtin, RUNNING > suspended)."""
     mics = sorted([s for s in sources if s.kind == "mic"], key=lambda s: -s.score)
     sys_ = sorted([s for s in sources if s.kind == "system"], key=lambda s: -s.score)
@@ -82,7 +84,9 @@ def list_source_outputs() -> list[dict]:
     try:
         out = subprocess.check_output(
             ["pactl", "list", "source-outputs"],
-            text=True, env=_pactl_env(), timeout=3,
+            text=True,
+            env=_pactl_env(),
+            timeout=3,
         )
     except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return []
@@ -105,7 +109,7 @@ def list_source_outputs() -> list[dict]:
     return entries
 
 
-def detect_active_call(cfg: dict) -> Optional[str]:
+def detect_active_call(cfg: dict) -> str | None:
     """Retorna nome do app de call ativo, ou None.
 
     Match contra cfg['apps'] (case-insensitive, substring). Bloqueia cfg['deny_apps'].
@@ -127,16 +131,30 @@ def detect_active_call(cfg: dict) -> Optional[str]:
     return None
 
 
-def measure_mic_db(source: str, sample_seconds: int = 3) -> Optional[float]:
+def measure_mic_db(source: str, sample_seconds: int = 3) -> float | None:
     """RMS dB do mic via ffmpeg volumedetect num snapshot curto."""
     cmd = [
-        "ffmpeg", "-hide_banner", "-nostats",
-        "-f", "pulse", "-i", source, "-t", str(sample_seconds),
-        "-af", "volumedetect", "-f", "null", "-",
+        "ffmpeg",
+        "-hide_banner",
+        "-nostats",
+        "-f",
+        "pulse",
+        "-i",
+        source,
+        "-t",
+        str(sample_seconds),
+        "-af",
+        "volumedetect",
+        "-f",
+        "null",
+        "-",
     ]
     try:
         proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=sample_seconds + 5,
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=sample_seconds + 5,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None

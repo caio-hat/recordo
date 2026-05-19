@@ -1,4 +1,5 @@
 """Configurações, paths XDG e defaults."""
+
 from __future__ import annotations
 
 import json
@@ -36,11 +37,21 @@ DEFAULT_MAX_SEGMENT = 1800  # 30min por segmento, auto-cycle
 DEFAULT_AUTO_DETECT = {
     "enabled": False,
     "apps": [
-        "teams-for-linux", "Teams", "Microsoft.Teams",
-        "zoom", "Zoom",
-        "Google Chrome", "Chromium", "chrome", "Brave",
-        "firefox", "Firefox", "Mozilla Firefox",
-        "Slack", "Discord", "discord",
+        "teams-for-linux",
+        "Teams",
+        "Microsoft.Teams",
+        "zoom",
+        "Zoom",
+        "Google Chrome",
+        "Chromium",
+        "chrome",
+        "Brave",
+        "firefox",
+        "Firefox",
+        "Mozilla Firefox",
+        "Slack",
+        "Discord",
+        "discord",
         "WebRTC VoiceEngine",
     ],
     "deny_apps": [],

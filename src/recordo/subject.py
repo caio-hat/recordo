@@ -1,4 +1,5 @@
 """Detecção do assunto da gravação via título da janela ativa."""
+
 from __future__ import annotations
 
 import re
@@ -26,7 +27,9 @@ def _active_window_title() -> str:
     try:
         out = subprocess.check_output(
             ["xdotool", "getactivewindow", "getwindowname"],
-            text=True, stderr=subprocess.DEVNULL, timeout=2,
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=2,
         )
         return out.strip()
     except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):

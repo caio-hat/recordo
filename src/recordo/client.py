@@ -1,4 +1,5 @@
 """Cliente do daemon via UNIX socket (JSON-lines)."""
+
 from __future__ import annotations
 
 import json
@@ -25,7 +26,7 @@ def send_to_daemon(cmd: str, **kwargs: Any) -> dict:
                 break
             data += chunk
         return json.loads(data.decode("utf-8")) if data else {"ok": False, "error": "sem resposta"}
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         return {"ok": False, "error": f"falha socket: {e}"}
     finally:
         s.close()

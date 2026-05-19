@@ -1,4 +1,5 @@
 """Entry point CLI — argparse + dispatch dos modos (daemon, client, standalone)."""
+
 from __future__ import annotations
 
 import argparse
@@ -14,13 +15,21 @@ from rich.table import Table
 from . import __version__
 from .client import send_to_daemon
 from .config import (
-    AUTO_DETECT_CONFIG, DEFAULT_AUTO_DETECT, DEFAULT_MAX_SEGMENT,
-    DEFAULT_OUTPUT_DIR, SOCKET_PATH, setup_logging,
+    DEFAULT_MAX_SEGMENT,
+    DEFAULT_OUTPUT_DIR,
+    SOCKET_PATH,
+    setup_logging,
 )
 from .daemon import Daemon
 from .recorder import (
-    Recorder, SessionState, acquire_lock, find_resumable, install_signals,
-    make_session, set_recorder_ref, write_report,
+    Recorder,
+    SessionState,
+    acquire_lock,
+    find_resumable,
+    install_signals,
+    make_session,
+    set_recorder_ref,
+    write_report,
 )
 from .sources import AudioSource, auto_pick, list_sources
 from .tui import run_plain, run_tui
@@ -37,8 +46,7 @@ def _print_devices(sources: list[AudioSource]) -> None:
     table.add_column("Score", width=5)
     table.add_column("Nome / Descrição")
     for i, s in enumerate(sources):
-        table.add_row(str(i), s.kind, s.state, str(s.score),
-                      f"{s.name}\n[dim]{s.description}[/dim]")
+        table.add_row(str(i), s.kind, s.state, str(s.score), f"{s.name}\n[dim]{s.description}[/dim]")
     Console().print(table)
 
 
@@ -61,34 +69,51 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--list-devices", action="store_true", help="Lista fontes de áudio e sai")
     p.add_argument("--mic", help="Nome PulseAudio da fonte de microfone")
     p.add_argument("--sys", dest="sys_src", help="Nome PulseAudio do monitor de sistema")
-    p.add_argument("-a", "--auto", action="store_true",
-                   help="Auto-detecta mic e sys (Bluetooth>USB>builtin)")
-    p.add_argument("--max-segment", type=int, default=DEFAULT_MAX_SEGMENT,
-                   help=f"Cap por segmento em segundos (default {DEFAULT_MAX_SEGMENT})")
+    p.add_argument("-a", "--auto", action="store_true", help="Auto-detecta mic e sys (Bluetooth>USB>builtin)")
+    p.add_argument(
+        "--max-segment",
+        type=int,
+        default=DEFAULT_MAX_SEGMENT,
+        help=f"Cap por segmento em segundos (default {DEFAULT_MAX_SEGMENT})",
+    )
     p.add_argument("--bitrate", default="32k", help="Bitrate Opus (default 32k voz)")
-    p.add_argument("--layout", choices=["merge", "split"], default="merge",
-                   help="merge = mix loudnorm  /  split = sys=L mic=R")
-    p.add_argument("-o", "--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR,
-                   help=f"Diretório base (default {DEFAULT_OUTPUT_DIR})")
-    p.add_argument("--no-tui", action="store_true",
-                   help="Modo plain (sem Rich Live, comandos via ENTER)")
-    p.add_argument("-T", "--transcribe", action="store_true",
-                   help="Transcreve arquivo final com faster-whisper")
-    p.add_argument("--whisper-model", default="base",
-                   help="Modelo Whisper (tiny|base|small|medium|large-v3)")
+    p.add_argument(
+        "--layout",
+        choices=["merge", "split"],
+        default="merge",
+        help="merge = mix loudnorm  /  split = sys=L mic=R",
+    )
+    p.add_argument(
+        "-o",
+        "--output-dir",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR,
+        help=f"Diretório base (default {DEFAULT_OUTPUT_DIR})",
+    )
+    p.add_argument("--no-tui", action="store_true", help="Modo plain (sem Rich Live, comandos via ENTER)")
+    p.add_argument(
+        "-T", "--transcribe", action="store_true", help="Transcreve arquivo final com faster-whisper"
+    )
+    p.add_argument("--whisper-model", default="base", help="Modelo Whisper (tiny|base|small|medium|large-v3)")
     p.add_argument("--language", default="pt", help="Idioma para transcrição (default pt)")
     p.add_argument("--resume", action="store_true", help="Retoma sessão anterior incompleta")
     p.add_argument("-v", "--verbose", action="store_true", help="Logs verbose")
 
     g = p.add_argument_group("daemon mode")
-    g.add_argument("--daemon", action="store_true",
-                   help="Roda como daemon (UNIX socket persistente)")
-    g.add_argument("--toggle", action="store_true",
-                   help="Toggle gravação via daemon (start se idle, stop se ativo)")
+    g.add_argument("--daemon", action="store_true", help="Roda como daemon (UNIX socket persistente)")
+    g.add_argument(
+        "--toggle", action="store_true", help="Toggle gravação via daemon (start se idle, stop se ativo)"
+    )
     g.add_argument("--stop", action="store_true", help="Para gravação via daemon")
     g.add_argument("--status", action="store_true", help="Mostra status do daemon")
-    g.add_argument("--mark", metavar="TEXTO", nargs="?", const="", default=None,
-                   help="Marca momento na gravação ativa (texto opcional)")
+    g.add_argument(
+        "--mark",
+        metavar="TEXTO",
+        nargs="?",
+        const="",
+        default=None,
+        help="Marca momento na gravação ativa (texto opcional)",
+    )
     g.add_argument("--quit-daemon", action="store_true", help="Encerra daemon graciosamente")
     return p
 
@@ -119,9 +144,14 @@ def _run_daemon(args: argparse.Namespace) -> int:
             return 1
         log.info("socket órfão detectado — removendo")
         SOCKET_PATH.unlink(missing_ok=True)
-    d = Daemon(output_dir=args.output_dir, bitrate=args.bitrate,
-               layout=args.layout, max_segment=args.max_segment,
-               whisper_model=args.whisper_model, language=args.language)
+    d = Daemon(
+        output_dir=args.output_dir,
+        bitrate=args.bitrate,
+        layout=args.layout,
+        max_segment=args.max_segment,
+        whisper_model=args.whisper_model,
+        language=args.language,
+    )
     try:
         asyncio.run(d.run())
     except KeyboardInterrupt:
@@ -154,10 +184,10 @@ def _run_standalone(args: argparse.Namespace) -> int:
                 mic, sys_ = _interactive_pick(sources)
             else:
                 console.print(f"[green]Auto:[/green] mic=[cyan]{mic}[/cyan]  sys=[cyan]{sys_}[/cyan]")
-        subject = args.subject or Console().input(
-            "[bold]Assunto da gravação:[/bold] ").strip() or "Gravacao"
-        state = make_session(subject, mic, sys_, bitrate=args.bitrate,
-                             layout=args.layout, base_dir=args.output_dir)
+        subject = args.subject or Console().input("[bold]Assunto da gravação:[/bold] ").strip() or "Gravacao"
+        state = make_session(
+            subject, mic, sys_, bitrate=args.bitrate, layout=args.layout, base_dir=args.output_dir
+        )
         state.save()
 
     acquire_lock()
@@ -182,8 +212,9 @@ def _run_standalone(args: argparse.Namespace) -> int:
     if args.transcribe and final:
         try:
             from .pipeline import transcribe
+
             transcribe(final, model_size=args.whisper_model, language=args.language)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             log.exception("falha na transcrição: %s", e)
             console.print(f"[red]Erro na transcrição:[/red] {e}")
     return 0
