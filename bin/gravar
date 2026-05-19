@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Recordo toggle wrapper — pra hotkey global (Super+R)
+# Vivo: manda toggle. Morto: tenta systemd start, fallback nohup.
+
+set -eu
+
+SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/recordo.sock"
+
+if [[ -S "$SOCK" ]]; then
+    recordo --toggle
+    exit $?
+fi
+
+if command -v systemctl >/dev/null && systemctl --user list-unit-files | grep -q recordo.service; then
+    notify-send -a Recordo -i media-record "Recordo" "Iniciando daemon..."
+    systemctl --user start recordo
+else
+    nohup recordo --daemon >/tmp/recordo.daemon.log 2>&1 &
+    disown
+fi
+
+# Polling até socket aparecer (max 5s)
+for _ in $(seq 1 25); do
+    if [[ -S "$SOCK" ]]; then
+        recordo --toggle
+        exit $?
+    fi
+    sleep 0.2
+done
+
+notify-send -a Recordo -u critical -i dialog-error "Recordo" "Daemon não inicializou."
+exit 1

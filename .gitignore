@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+
+# venvs
+venv/
+.venv/
+env/
+
+# Test / lint
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Runtime (não devem entrar no repo mesmo que apareçam)
+/tmp/recordo*
+*.sock
+*.lock
+
+# Logs
+*.log
+
+# Local config (user-specific)
+.envrc

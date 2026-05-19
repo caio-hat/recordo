@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Recordo logo mono">
+  <title>Recordo mono</title>
+
+  <g fill="none" stroke="currentColor" stroke-linecap="round" opacity="0.55">
+    <path d="M 36 128 A 92 92 0 0 1 128 36" stroke-width="6"/>
+    <path d="M 220 128 A 92 92 0 0 1 128 220" stroke-width="6"/>
+  </g>
+  <g fill="none" stroke="currentColor" stroke-linecap="round" opacity="0.28">
+    <path d="M 18 128 A 110 110 0 0 1 128 18" stroke-width="4"/>
+    <path d="M 238 128 A 110 110 0 0 1 128 238" stroke-width="4"/>
+  </g>
+
+  <circle cx="128" cy="128" r="78" fill="currentColor"/>
+
+  <g font-family="ui-sans-serif, system-ui, sans-serif" font-weight="900" font-size="116"
+     fill="#0b0b0c" text-anchor="middle" dominant-baseline="central">
+    <text x="128" y="134" letter-spacing="-4">R</text>
+  </g>
+
+  <circle cx="194" cy="194" r="10" fill="#0b0b0c"/>
+  <circle cx="194" cy="194" r="6" fill="currentColor"/>
+</svg>

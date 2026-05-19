@@ -1,0 +1,60 @@
+[project]
+name = "recordo"
+version = "0.1.0"
+description = "Frictionless meeting recorder with auto-transcription (TDAH-friendly). Record + recordar."
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "Caio Hat"}]
+requires-python = ">=3.10"
+keywords = ["audio", "recorder", "meeting", "tdah", "linux", "cinnamon", "pulseaudio", "whisper"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Capture/Recording",
+]
+dependencies = [
+    "rich>=13.7",
+]
+
+[project.optional-dependencies]
+transcribe = ["faster-whisper>=1.0"]
+dev = [
+    "pytest>=7",
+    "pytest-cov>=4",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+recordo = "recordo.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/caio-hat/recordo"
+Repository = "https://github.com/caio-hat/recordo"
+Issues = "https://github.com/caio-hat/recordo/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/recordo"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "RUF"]
+ignore = ["E501"]  # linhas longas ocasionais OK
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+addopts = "-v --tb=short"

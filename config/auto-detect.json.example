@@ -1,0 +1,25 @@
+{
+  "enabled": false,
+  "apps": [
+    "teams-for-linux",
+    "Teams",
+    "Microsoft.Teams",
+    "zoom",
+    "Zoom",
+    "Google Chrome",
+    "Chromium",
+    "chrome",
+    "Brave",
+    "firefox",
+    "Firefox",
+    "Mozilla Firefox",
+    "Slack",
+    "Discord",
+    "discord",
+    "WebRTC VoiceEngine"
+  ],
+  "deny_apps": [],
+  "min_mic_duration_seconds": 8,
+  "quiet_period_after_stop_minutes": 5,
+  "poll_interval_seconds": 5
+}

@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Marca momento em gravação ativa — pra hotkey (Super+Shift+M)
+
+set -eu
+
+SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/recordo.sock"
+
+if [[ ! -S "$SOCK" ]]; then
+    notify-send -a Recordo -u critical -i dialog-error "Recordo" "Daemon offline."
+    exit 1
+fi
+
+STATUS=$(recordo --status 2>/dev/null || true)
+if ! echo "$STATUS" | grep -q '"recording": true'; then
+    notify-send -a Recordo -i dialog-warning "Recordo" "Nenhuma gravação ativa."
+    exit 1
+fi
+
+if command -v zenity >/dev/null; then
+    TEXT=$(zenity --entry --title="Marcar momento" --timeout=15 \
+           --text="Nota (vazio = só timestamp):" 2>/dev/null || echo "")
+else
+    TEXT=""
+fi
+
+recordo --mark "$TEXT"

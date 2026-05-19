@@ -1,0 +1,9 @@
+[org/cinnamon/desktop/keybindings/custom-keybindings/__SLOT_TOGGLE__]
+binding=['<Super>r']
+command='__BIN_DIR__/gravar'
+name='Recordo · toggle gravação'
+
+[org/cinnamon/desktop/keybindings/custom-keybindings/__SLOT_MARK__]
+binding=['<Super><Shift>m']
+command='__BIN_DIR__/marcar'
+name='Recordo · marcar momento'
