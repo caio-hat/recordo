@@ -16,6 +16,7 @@ from .config import NOTAS_DIR, load_config
 from .notify import notify
 from .recorder import Mark, SessionState
 from .subject import safe_subject
+from .summarizer import SummaryResult
 from .transcribers import TranscriptionResult, get_transcriber
 
 log = logging.getLogger(__name__)
@@ -23,6 +24,7 @@ log = logging.getLogger(__name__)
 WHISPER_PKGS = ["faster-whisper>=1.0"]
 PLACEHOLDER = "_(processando — esta seção é preenchida quando o backend terminar)_"
 SUMMARY_PLACEHOLDER = "_(resumo será gerado após a transcrição)_"
+TOPICS_PLACEHOLDER = "_(assuntos serão identificados após a transcrição)_"
 
 # Status dict global indexado por target_dir.name. Usado por callers (rerun)
 # pra inspecionar erros assíncronos da thread de transcrição. Não é
@@ -117,10 +119,15 @@ transcricao: ./transcricao.txt
 segments: {len(state.segments)}
 auto_started: {state.auto_started}
 backend: {backend_name}
+transcription_status: pending
 tags: [reuniao]
 ---
 
 # {state.subject}
+
+## Assuntos da Conversa
+
+{TOPICS_PLACEHOLDER}
 
 ## Resumo
 
@@ -195,6 +202,7 @@ def post_pipeline(
             "summarizer_cfg": summarizer_cfg,
             "subject": state.subject,
             "status": pipeline_status,
+            "marks": marks,
         },
         daemon=False,
         name="recordo-transcribe",
@@ -224,6 +232,7 @@ def _transcribe_async(
     summarizer_cfg: dict[str, Any] | None = None,
     subject: str = "",
     status: dict[str, Any] | None = None,
+    marks: list[Mark] | None = None,
 ) -> None:
     """Worker da thread de transcrição.
 
@@ -264,7 +273,8 @@ def _transcribe_async(
 
         transcriber = get_transcriber(backend, transcriber_cfg)
         result = transcriber.transcribe(audio_dst, language=language)
-        _write_result(audio_dst, nota_md, result)
+        _write_result(audio_dst, nota_md, result, marks=marks)
+        _set_transcription_status(nota_md, "done")
         status["transcriber"] = result.backend
         notify(
             "✓ Transcrição pronta",
@@ -272,6 +282,15 @@ def _transcribe_async(
             icon="document-edit",
             transient=True,
         )
+
+        # Topic segmentation (em paralelo conceitual ao resumo, mas serial)
+        if summarizer_cfg is not None:
+            from .topics import extract_topics
+
+            topics_result = extract_topics(result, subject=subject, summarizer_cfg=summarizer_cfg)
+            _embed_topics(nota_md, topics_result)
+            _write_topics_json(target_dir, topics_result)
+            status["topics_backend"] = topics_result.backend
 
         # Gera resumo (não bloqueia transcrição) com fallback Ollama → heuristic
         if summarizer_cfg is not None:
@@ -294,6 +313,7 @@ def _transcribe_async(
     except Exception as e:
         log.exception("falha transcrição/resumo async: %s", e)
         status["error"] = str(e)[:200]
+        _set_transcription_status(nota_md, "error")
         notify("⚠️ Erro pipeline", str(e)[:120], urgency="critical")
 
 
@@ -303,41 +323,78 @@ def _generate_summary(
     subject: str,
     summarizer_cfg: dict[str, Any],
     language: str = "pt",
-) -> SummaryResult:  # noqa: F821 - imported lazily
-    """Gera resumo respeitando fallback Ollama → heuristic.
+) -> SummaryResult:
+    """Gera resumo com cascata de fallbacks.
 
-    summarizer_cfg ['backend'] = 'ollama' | 'heuristic' | 'none'
-    Se 'ollama' falhar e fallback_to_heuristic=True, tenta heuristic.
+    Cascata padrão (configurável):
+      1. Provider primário (config['backend'])
+      2. Se cloud falhou e config['fallback_to_local']=True (default): tenta ollama
+      3. Se ollama falhou e config['fallback_to_heuristic']=True (default): tenta heuristic
+
+    `backend` no config['backend']:
+      ollama | gemini | openai | openai_compat | anthropic | azure_openai
+      | heuristic | none
+
+    Marca origem do fallback no `result.backend` ("X (fallback de Y)").
     """
     from .summarizer import get_summarizer
+    from .summarizer.base import NoOpSummarizer
 
     backend_name = summarizer_cfg.get("backend", "ollama")
     if backend_name == "none":
-        from .summarizer.base import NoOpSummarizer
-
         return NoOpSummarizer().summarize(transcript_text, language=language, subject=subject)
 
     primary = get_summarizer(backend_name, summarizer_cfg)
     log.info("gerando resumo com %s", primary.name)
     result = primary.summarize(transcript_text, language=language, subject=subject)
 
-    if result.error and backend_name == "ollama" and summarizer_cfg.get("fallback_to_heuristic", True):
-        log.warning("ollama falhou (%s) — fallback heuristic", result.error)
+    if not result.error:
+        return result
+
+    # Fallback 1: cloud → ollama (se backend primário não era ollama)
+    cloud_backends = {"gemini", "openai", "openai_compat", "anthropic", "azure_openai"}
+    if backend_name in cloud_backends and summarizer_cfg.get("fallback_to_local", True):
+        log.warning("%s falhou (%s) — tentando ollama como fallback local", primary.name, result.error)
+        ollama_summ = get_summarizer("ollama", summarizer_cfg)
+        ollama_result = ollama_summ.summarize(transcript_text, language=language, subject=subject)
+        if not ollama_result.error:
+            ollama_result.backend = f"{ollama_result.backend} (fallback de {primary.name})"
+            return ollama_result
+        # ollama falhou também → próximo fallback
+        log.warning("ollama também falhou (%s)", ollama_result.error)
+        result = ollama_result
+
+    # Fallback 2: heuristic (sempre disponível, sem deps)
+    if summarizer_cfg.get("fallback_to_heuristic", True):
+        log.warning("último fallback: heuristic")
         fallback = get_summarizer("heuristic", summarizer_cfg)
-        result = fallback.summarize(transcript_text, language=language, subject=subject)
-        if not result.error:
-            # Marca origem do fallback no backend
-            result.backend = f"{result.backend} (fallback de {primary.name})"
+        heuristic_result = fallback.summarize(transcript_text, language=language, subject=subject)
+        if not heuristic_result.error:
+            heuristic_result.backend = f"{heuristic_result.backend} (fallback de {primary.name})"
+            return heuristic_result
 
     return result
 
 
-def _write_result(audio_dst: Path, nota_md: Path, result: TranscriptionResult) -> None:
-    """Persiste arquivos de transcrição e atualiza nota.md."""
+def _write_result(
+    audio_dst: Path,
+    nota_md: Path,
+    result: TranscriptionResult,
+    marks: list[Mark] | None = None,
+) -> None:
+    """Persiste arquivos de transcrição e atualiza nota.md.
+
+    Se marks forem passadas, interleava elas no transcricao.txt no timestamp
+    correto — ex: `[📍 02:05] decisão importante` entre as linhas dos segments.
+    """
     txt_out = audio_dst.parent / "transcricao.txt"
     srt_out = audio_dst.parent / "transcricao.srt"
     result.write_txt(txt_out)
     result.write_srt(srt_out)
+
+    # Interleave marks no txt se fornecidas
+    if marks:
+        _interleave_marks_into_txt(txt_out, marks)
 
     nota = nota_md.read_text(encoding="utf-8")
     embedded = txt_out.read_text(encoding="utf-8")
@@ -346,6 +403,51 @@ def _write_result(audio_dst: Path, nota_md: Path, result: TranscriptionResult) -
     if "backend:" in nota:
         nota = re.sub(r"^backend:.*$", f"backend: {result.backend}", nota, count=1, flags=re.M)
     nota_md.write_text(nota, encoding="utf-8")
+
+
+def _interleave_marks_into_txt(txt_path: Path, marks: list[Mark]) -> None:
+    """Insere linhas '[📍 mm:ss] texto da marca' no transcricao.txt nos pontos certos.
+
+    Estratégia: lê o txt linha-a-linha, parseia '[start → end]' de cada,
+    insere marks ANTES da primeira linha cujo start >= mark.ts_seconds.
+    """
+    if not marks or not txt_path.exists():
+        return
+
+    sorted_marks = sorted(marks, key=lambda m: m.ts_seconds)
+    pending = list(sorted_marks)
+
+    out_lines: list[str] = []
+    for line in txt_path.read_text(encoding="utf-8").splitlines():
+        m = re.match(r"^\[\s*([\d.]+)\s+→\s+[\d.]+\]", line)
+        if m:
+            line_start = float(m.group(1))
+            # Insere todas as marks que vieram antes desta linha
+            while pending and pending[0].ts_seconds <= line_start:
+                mk = pending.pop(0)
+                ts_str = _format_mark_ts(mk.ts_seconds)
+                text = mk.text.strip() or "(marca)"
+                out_lines.append(f"[📍 {ts_str}] {text}")
+        out_lines.append(line)
+
+    # Marks sem segment correspondente após o final
+    while pending:
+        mk = pending.pop(0)
+        ts_str = _format_mark_ts(mk.ts_seconds)
+        text = mk.text.strip() or "(marca)"
+        out_lines.append(f"[📍 {ts_str}] {text}")
+
+    txt_path.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+
+
+def _format_mark_ts(seconds: float) -> str:
+    """Segundos → mm:ss ou hh:mm:ss."""
+    s = int(seconds)
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    if h:
+        return f"{h:02d}:{m:02d}:{sec:02d}"
+    return f"{m:02d}:{sec:02d}"
 
 
 def _embed_summary(nota_md: Path, summary: Any) -> None:
@@ -408,6 +510,109 @@ def _write_summary_md(target_dir: Path, summary: Any) -> None:
         f"# Resumo — {target_dir.name}\n\n{summary.to_markdown()}",
         encoding="utf-8",
     )
+
+
+def _embed_topics(nota_md: Path, topics_result: Any) -> None:
+    """Substitui TOPICS_PLACEHOLDER em nota.md pelo bloco markdown dos tópicos.
+
+    Atualiza linha `topics_backend:` no frontmatter (adiciona se ausente).
+    """
+    nota = nota_md.read_text(encoding="utf-8")
+    md_block = topics_result.to_markdown()
+
+    if TOPICS_PLACEHOLDER in nota:
+        nota = nota.replace(TOPICS_PLACEHOLDER, md_block.rstrip())
+    else:
+        # Nota sem placeholder (re-rodada): substitui bloco "## Assuntos" existente
+        # até a próxima `## ` (Resumo) ou EOF
+        if re.search(r"^## Assuntos da Conversa\b", nota, flags=re.M):
+            nota = re.sub(
+                r"## Assuntos da Conversa\s*\n+(?:.*?\n)*?(?=## |\Z)",
+                f"## Assuntos da Conversa\n\n{md_block.rstrip()}\n\n",
+                nota,
+                count=1,
+                flags=re.DOTALL | re.M,
+            )
+        else:
+            # Insere antes de `## Resumo` (formato antigo sem topics)
+            nota = re.sub(
+                r"^(## Resumo)",
+                f"## Assuntos da Conversa\n\n{md_block.rstrip()}\n\n\\1",
+                nota,
+                count=1,
+                flags=re.M,
+            )
+
+    # Frontmatter: atualiza/adiciona topics_backend:
+    if re.search(r"^topics_backend:.*$", nota, flags=re.M):
+        nota = re.sub(
+            r"^topics_backend:.*$",
+            f"topics_backend: {topics_result.backend or 'none'}",
+            nota,
+            count=1,
+            flags=re.M,
+        )
+    elif "summarizer:" in nota:
+        nota = re.sub(
+            r"^(summarizer:.*)$",
+            f"\\1\ntopics_backend: {topics_result.backend or 'none'}",
+            nota,
+            count=1,
+            flags=re.M,
+        )
+    elif "backend:" in nota:
+        nota = re.sub(
+            r"^(backend:.*)$",
+            f"\\1\ntopics_backend: {topics_result.backend or 'none'}",
+            nota,
+            count=1,
+            flags=re.M,
+        )
+
+    nota_md.write_text(nota, encoding="utf-8")
+
+
+def _write_topics_json(target_dir: Path, topics_result: Any) -> None:
+    """Salva topics.json standalone (úteis pra plotar timeline visual ou scripts)."""
+    if topics_result.is_empty and not topics_result.error:
+        return
+    (target_dir / "topics.json").write_text(topics_result.to_json(), encoding="utf-8")
+
+
+def _set_transcription_status(nota_md: Path, status: str) -> None:
+    """Atualiza linha transcription_status no frontmatter da nota.md.
+
+    Status válidos: pending | done | error
+    Idempotente — adiciona linha se ausente, atualiza se existe.
+    """
+    if not nota_md.exists():
+        return
+    try:
+        content = nota_md.read_text(encoding="utf-8")
+    except OSError:
+        return
+
+    if re.search(r"^transcription_status:.*$", content, flags=re.M):
+        new = re.sub(
+            r"^transcription_status:.*$",
+            f"transcription_status: {status}",
+            content,
+            count=1,
+            flags=re.M,
+        )
+    elif "backend:" in content:
+        new = re.sub(
+            r"^(backend:.*)$",
+            f"\\1\ntranscription_status: {status}",
+            content,
+            count=1,
+            flags=re.M,
+        )
+    else:
+        return  # frontmatter malformado, skip
+
+    if new != content:
+        nota_md.write_text(new, encoding="utf-8")
 
 
 def retranscribe(
