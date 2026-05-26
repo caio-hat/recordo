@@ -69,4 +69,25 @@ def test_concat_writes_list_file(tmp_path: Path):
     content = list_p.read_text()
     assert "a.opus" in content and "b.opus" in content
     assert "concat" in cmd
+
+
+def test_concat_default_uses_copy(tmp_path: Path):
+    """Default: -c copy (rápido, lossless)."""
+    segs = [tmp_path / "a.opus"]
+    segs[0].write_bytes(b"x")
+    cmd = build_concat_cmd(segs, tmp_path / "list.txt", tmp_path / "final.opus")
+    assert "copy" in cmd
+    assert "libopus" not in cmd  # sem reencode
+
+
+def test_concat_reencode_when_requested(tmp_path: Path):
+    """reencode=True: libopus + bitrate (caso de segmentos heterogêneos)."""
+    segs = [tmp_path / "a.opus"]
+    segs[0].write_bytes(b"x")
+    cmd = build_concat_cmd(
+        segs, tmp_path / "list.txt", tmp_path / "final.opus",
+        bitrate="48k", reencode=True,
+    )
     assert "libopus" in cmd
+    assert "48k" in cmd
+    assert "copy" not in cmd or cmd.index("libopus") < cmd.index("copy")  # libopus, não copy

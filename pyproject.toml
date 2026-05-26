@@ -21,12 +21,14 @@ classifiers = [
 ]
 dependencies = [
     "rich>=13.7",
+    "textual>=0.86",
 ]
 
 [project.optional-dependencies]
 transcribe = ["faster-whisper>=1.0"]
 dev = [
     "pytest>=7",
+    "pytest-asyncio>=0.23",
     "pytest-cov>=4",
     "ruff>=0.5",
 ]
@@ -58,3 +60,4 @@ ignore = ["E501"]  # linhas longas ocasionais OK
 testpaths = ["tests"]
 python_files = "test_*.py"
 addopts = "-v --tb=short"
+asyncio_mode = "auto"

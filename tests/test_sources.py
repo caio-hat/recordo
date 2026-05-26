@@ -77,3 +77,38 @@ class TestDetectActiveCall:
         )
         cfg = {"apps": ["teams-for-linux"], "deny_apps": []}
         assert detect_active_call(cfg) == "teams-for-linux"
+
+
+class TestRmsDbfs:
+    """Testa o cálculo RMS s16le → dBFS (lógica pura, sem subprocess)."""
+
+    def test_silence_returns_low_db(self):
+        from recordo.sources import _rms_dbfs_s16le
+
+        # 1s de silêncio @16kHz mono
+        data = b"\x00\x00" * 16000
+        db = _rms_dbfs_s16le(data)
+        assert db <= -60  # silêncio absoluto
+
+    def test_full_scale_sine_near_zero_db(self):
+        import math
+        import struct
+
+        from recordo.sources import _rms_dbfs_s16le
+
+        # tom puro a 440Hz, amplitude 0.7 do full-scale → ~-3 dBFS
+        rate = 16000
+        amp = int(32767 * 0.7)
+        samples = [
+            int(amp * math.sin(2 * math.pi * 440 * i / rate))
+            for i in range(rate)  # 1 segundo
+        ]
+        data = b"".join(struct.pack("<h", s) for s in samples)
+        db = _rms_dbfs_s16le(data)
+        # senoide RMS ~= amp/sqrt(2) → ~-6 dBFS de pico-rms
+        assert -10 < db < -3
+
+    def test_empty_returns_floor(self):
+        from recordo.sources import _rms_dbfs_s16le
+
+        assert _rms_dbfs_s16le(b"") <= -90
