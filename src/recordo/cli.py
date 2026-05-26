@@ -136,6 +136,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Re-roda post_pipeline em sessão antiga em ~/recordings/ (recovery). "
         "Útil quando concat truncou ou pipeline morreu silenciosamente.",
     )
+    g.add_argument(
+        "--rename",
+        metavar="RECORDING",
+        help="Renomeia gravação em ~/Notas/. RECORDING = path completo OU nome do diretório "
+        "OU substring única que case. Use com --new-subject 'Novo Assunto'.",
+    )
+    g.add_argument(
+        "--new-subject",
+        metavar="SUBJECT",
+        help="Novo assunto para --rename (texto humano-legível).",
+    )
+    g.add_argument(
+        "--search",
+        metavar="QUERY",
+        help="Busca regex/substring em ~/Notas/ (nota.md, transcricao.txt, resumo.md). "
+        "Mostra snippets contextuais com paths.",
+    )
+    g.add_argument(
+        "--tray",
+        action="store_true",
+        help="Abre tray icon do sistema (XApp.StatusIcon ou AppIndicator) com ações "
+        "rápidas: toggle/marcar/abrir GUI/abrir Notas. Independente da GUI.",
+    )
     return p
 
 
@@ -290,9 +313,62 @@ def main() -> int:
         return run_textual_tui()
     if args.rerun_pipeline:
         return _run_rerun_pipeline(args.rerun_pipeline)
+    if args.rename:
+        return _run_rename(args.rename, args.new_subject)
+    if args.search:
+        return _run_search(args.search)
+    if args.tray:
+        from .tray import run_tray
+
+        return run_tray()
     if args.daemon:
         return _run_daemon(args)
     return _run_standalone(args)
+
+
+def _run_rename(recording: str, new_subject: str | None) -> int:
+    """Renomeia uma gravação em ~/Notas/."""
+    from .rename import find_recording, rename_recording
+
+    if not new_subject:
+        console.print("[red]--rename requer --new-subject 'Novo Assunto'[/red]")
+        return 2
+
+    target = find_recording(recording)
+    if target is None:
+        console.print(f"[red]Gravação não encontrada:[/red] {recording}")
+        console.print("[dim]Buscado em ~/Notas/ por nome, path ou substring[/dim]")
+        return 1
+
+    result = rename_recording(target, new_subject)
+    if not result.ok:
+        console.print(f"[red]Falhou:[/red] {result.error}")
+        return 1
+    console.print(f"[green]✓ Renomeado:[/green] {result.old_dir.name} → {result.new_dir.name}")  # type: ignore[union-attr]
+    if result.files_updated:
+        console.print(f"[dim]Atualizados: {', '.join(result.files_updated)}[/dim]")
+    return 0
+
+
+def _run_search(query: str) -> int:
+    """Busca cross-notas em ~/Notas/."""
+    from .search import search_notas
+
+    results = search_notas(query)
+    if not results:
+        console.print(f"[yellow]Sem resultados para:[/yellow] {query}")
+        return 1
+
+    console.print(f"[bold]{len(results)} resultados[/bold] para '[cyan]{query}[/cyan]':\n")
+    for r in results:
+        console.print(
+            f"[cyan]{r.recording_dir.name}[/cyan] "
+            f"[dim]({r.file_relative} · {r.match_count} match{'es' if r.match_count > 1 else ''})[/dim]"
+        )
+        for snippet in r.snippets[:3]:
+            console.print(f"  [dim]…[/dim] {snippet} [dim]…[/dim]")
+        console.print()
+    return 0
 
 
 def _run_rerun_pipeline(session_dir: str) -> int:
