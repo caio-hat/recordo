@@ -73,18 +73,62 @@ DEFAULTS: dict[str, Any] = {
         },
     },
     "summarizer": {
-        "backend": "ollama",  # ollama | heuristic | none
+        "backend": "ollama",  # ollama | gemini | openai | openai_compat | anthropic | azure_openai | heuristic | none
+        "fallback_to_local": True,  # se cloud falhar, tenta ollama
+        "fallback_to_heuristic": True,  # se ollama falhar (ou foi único), tenta heuristic
         "ollama": {
             "model": "gemma2:2b",
             "host": "http://localhost:11434",
             "timeout_seconds": 120,
             "max_transcript_chars": 30000,
         },
+        "gemini": {
+            "model": "gemini-2.5-flash",
+            "api_key_env": "GEMINI_API_KEY",
+            "timeout_seconds": 90,
+            "max_transcript_chars": 30000,
+            "temperature": 0.3,
+        },
+        "openai": {
+            "model": "gpt-4o-mini",
+            "api_key_env": "OPENAI_API_KEY",
+            "base_url": "https://api.openai.com/v1",
+            "timeout_seconds": 90,
+            "max_transcript_chars": 30000,
+            "temperature": 0.3,
+        },
+        "openai_compat": {
+            # OpenAI-compatible APIs (Groq/Together/Fireworks/OpenRouter/LM Studio/etc)
+            # Exemplo Groq: base_url="https://api.groq.com/openai/v1", model="llama-3.3-70b-versatile"
+            "model": "llama-3.3-70b-versatile",
+            "base_url": "https://api.groq.com/openai/v1",
+            "api_key_env": "GROQ_API_KEY",
+            "supports_json_object": True,
+            "timeout_seconds": 90,
+            "max_transcript_chars": 30000,
+            "temperature": 0.3,
+        },
+        "anthropic": {
+            "model": "claude-3-5-haiku-20241022",
+            "api_key_env": "ANTHROPIC_API_KEY",
+            "timeout_seconds": 90,
+            "max_transcript_chars": 30000,
+            "temperature": 0.3,
+            "max_tokens": 4096,
+        },
+        "azure_openai": {
+            "deployment": "",  # nome do deployment (não do modelo)
+            "endpoint": "",  # https://YOUR.openai.azure.com
+            "api_version": "2024-08-01-preview",
+            "api_key_env": "AZURE_OPENAI_API_KEY",
+            "timeout_seconds": 90,
+            "max_transcript_chars": 30000,
+            "temperature": 0.3,
+        },
         "heuristic": {
             "top_n_sentences": 5,
             "max_action_items": 8,
         },
-        "fallback_to_heuristic": True,  # se ollama indisponível, usa heuristic
     },
     "auto_detect": {
         "enabled": False,
