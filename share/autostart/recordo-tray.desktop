@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Recordo Tray
+GenericName=Meeting Recorder Tray
+Comment=Ícone na bandeja com ações rápidas para gravar reuniões
+Icon=recordo
+Exec=recordo-tray
+Terminal=false
+Categories=AudioVideo;Recorder;Utility;
+Keywords=record;recorder;tray;recordo;
+StartupNotify=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true

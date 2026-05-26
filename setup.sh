@@ -20,10 +20,12 @@ NO_SYSTEMD=0
 NO_CINNAMON=0
 NO_VICINAE=0
 NO_GUI=0
+WITH_TRAY_AUTOSTART=0
 for arg in "$@"; do
     case "$arg" in
         --with-transcribe) WITH_TRANSCRIBE=1 ;;
         --with-parakeet)   WITH_PARAKEET=1 ;;
+        --with-tray-autostart) WITH_TRAY_AUTOSTART=1 ;;
         --no-systemd)      NO_SYSTEMD=1 ;;
         --no-cinnamon)     NO_CINNAMON=1 ;;
         --no-vicinae)      NO_VICINAE=1 ;;
@@ -153,8 +155,9 @@ ln -sfn "$RECORDO_BIN"            "$BIN_DIR/recordo"
 ln -sfn "$REPO_DIR/bin/gravar"    "$BIN_DIR/gravar"
 ln -sfn "$REPO_DIR/bin/marcar"    "$BIN_DIR/marcar"
 ln -sfn "$REPO_DIR/bin/recordo-gui" "$BIN_DIR/recordo-gui"
-chmod +x "$REPO_DIR/bin/gravar" "$REPO_DIR/bin/marcar" "$REPO_DIR/bin/recordo-gui"
-echo "  ✓ $BIN_DIR/{recordo,gravar,marcar,recordo-gui}"
+ln -sfn "$REPO_DIR/bin/recordo-tray" "$BIN_DIR/recordo-tray"
+chmod +x "$REPO_DIR/bin/gravar" "$REPO_DIR/bin/marcar" "$REPO_DIR/bin/recordo-gui" "$REPO_DIR/bin/recordo-tray"
+echo "  ✓ $BIN_DIR/{recordo,gravar,marcar,recordo-gui,recordo-tray}"
 
 # Detecta se BIN_DIR está no PATH; alerta se não
 if ! echo ":$PATH:" | grep -q ":$BIN_DIR:"; then
@@ -258,6 +261,16 @@ else
     cp "$REPO_DIR/share/icons/hicolor/scalable/apps/recordo.svg" "$ICONS_DIR/scalable/apps/recordo.svg"
     cp "$REPO_DIR/share/icons/hicolor/symbolic/apps/recordo-symbolic.svg" "$ICONS_DIR/symbolic/apps/recordo-symbolic.svg"
     cp "$REPO_DIR/share/icons/hicolor/32x32/apps/recordo.svg" "$ICONS_DIR/32x32/apps/recordo.svg"
+
+    # Autostart do tray icon (opt-in via --with-tray-autostart)
+    AUTOSTART_DIR="$HOME/.config/autostart"
+    if [[ ${WITH_TRAY_AUTOSTART:-0} -eq 1 ]]; then
+        mkdir -p "$AUTOSTART_DIR"
+        cp "$REPO_DIR/share/autostart/recordo-tray.desktop" "$AUTOSTART_DIR/recordo-tray.desktop"
+        echo "  ✓ tray autostart instalado em $AUTOSTART_DIR"
+    else
+        echo "  ℹ tray autostart NÃO instalado (use --with-tray-autostart pra ativar)"
+    fi
     if command -v update-desktop-database >/dev/null; then
         update-desktop-database -q "$APPS_DIR" || true
     fi
