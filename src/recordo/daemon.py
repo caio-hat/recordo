@@ -8,11 +8,11 @@ import logging
 import os
 import signal
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
 
 from .config import (
-    DEFAULT_MAX_SEGMENT,
     HARD_CAP_SECONDS,
     REMINDER_INTERVAL,
     SILENCE_CHECK_INTERVAL,
@@ -20,6 +20,7 @@ from .config import (
     SILENCE_THRESHOLD_DB,
     SOCKET_PATH,
     load_auto_detect_config,
+    load_config,
 )
 from .notify import notify
 from .pipeline import post_pipeline
@@ -36,19 +37,23 @@ class Daemon:
     def __init__(
         self,
         *,
-        output_dir: Path,
-        bitrate: str,
-        layout: str,
-        max_segment: int = DEFAULT_MAX_SEGMENT,
-        whisper_model: str = "base",
-        language: str = "pt",
+        output_dir: Path | None = None,
+        bitrate: str | None = None,
+        layout: str | None = None,
+        max_segment: int | None = None,
+        whisper_model: str | None = None,
+        language: str | None = None,
+        config: dict | None = None,
     ):
-        self.output_dir = output_dir
-        self.bitrate = bitrate
-        self.layout = layout
-        self.max_segment = max_segment
-        self.whisper_model = whisper_model
-        self.language = language
+        # Aceita config dict completo OU args legacy (CLI sobrescreve TOML)
+        self.config: dict = config or load_config()
+        self.output_dir = output_dir or Path(self.config["general"]["output_dir"]).expanduser()
+        self.bitrate = bitrate or self.config["recording"]["bitrate"]
+        self.layout = layout or self.config["recording"]["layout"]
+        self.max_segment = max_segment or self.config["recording"]["max_segment"]
+        self.language = language or self.config["transcriber"]["language"]
+        # whisper_model é legacy: hoje a escolha vem de config["transcriber"]["backend"]
+        self.whisper_model = whisper_model or self.config["transcriber"]["whisper"]["model"]
 
         self.state = None  # type: ignore[var-annotated]
         self.recorder: Recorder | None = None
@@ -59,6 +64,13 @@ class Daemon:
         self._tasks: list[asyncio.Task] = []
         self._reminder_last_mono: float = 0.0
         self._auto_detect_first_seen: dict[str, float] = {}
+
+        # Executor dedicado pra trabalho pesado (post_pipeline, measure_mic_db).
+        # 2 workers: 1 pode estar rodando finalize+concat enquanto o próximo
+        # toggle já começa nova sessão, sem fila no executor default do asyncio.
+        self._pipeline_executor = ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="recordo-pipeline",
+        )
 
     # ── lifecycle ──────────────────────────────────────────────────────────
     async def run(self) -> None:
@@ -95,6 +107,9 @@ class Daemon:
             SOCKET_PATH.unlink()
         except FileNotFoundError:
             pass
+        # Aguarda jobs pendentes (transcrição) sem bloquear forever.
+        # daemon faz shutdown gracioso; jobs >timeout serão cancelados.
+        self._pipeline_executor.shutdown(wait=False, cancel_futures=False)
         notify("Recordo encerrado", "Daemon parado.", icon="media-playback-stop", transient=True)
 
     # ── socket handler ─────────────────────────────────────────────────────
@@ -118,6 +133,7 @@ class Daemon:
                 "mark": self._cmd_mark,
                 "status": self._cmd_status,
                 "quit": self._cmd_quit,
+                "reload_config": self._cmd_reload_config,
             }
             handler = handlers.get(cmd)
             if not handler:
@@ -192,12 +208,10 @@ class Daemon:
         if final:
             loop = asyncio.get_event_loop()
             target = await loop.run_in_executor(
-                None,
+                self._pipeline_executor,
                 lambda: post_pipeline(
-                    state,
-                    final,
-                    self.marks,
-                    whisper_model=self.whisper_model,
+                    state, final, self.marks,
+                    config=self.config,
                     language=self.language,
                 ),
             )
@@ -264,6 +278,37 @@ class Daemon:
         asyncio.get_event_loop().call_later(0.5, lambda: os.kill(os.getpid(), signal.SIGTERM))
         return {"ok": True, "shutting_down": True}
 
+    async def _cmd_reload_config(self, req: dict) -> dict:
+        """Re-lê config.toml e atualiza atributos.
+
+        Aplica imediatamente em parâmetros sem efeito retroativo (bitrate, layout,
+        max_segment se nova gravação). Gravação em curso mantém valores que
+        começou (evita merge inconsistente).
+        """
+        from datetime import datetime
+
+        new_cfg = load_config()
+        changed = []
+        if new_cfg["recording"]["bitrate"] != self.bitrate:
+            changed.append(f"bitrate: {self.bitrate} → {new_cfg['recording']['bitrate']}")
+            self.bitrate = new_cfg["recording"]["bitrate"]
+        if new_cfg["recording"]["layout"] != self.layout:
+            changed.append(f"layout: {self.layout} → {new_cfg['recording']['layout']}")
+            self.layout = new_cfg["recording"]["layout"]
+        if new_cfg["recording"]["max_segment"] != self.max_segment:
+            changed.append(f"max_segment: {self.max_segment} → {new_cfg['recording']['max_segment']}")
+            self.max_segment = new_cfg["recording"]["max_segment"]
+        if new_cfg["transcriber"]["language"] != self.language:
+            changed.append(f"language: {self.language} → {new_cfg['transcriber']['language']}")
+            self.language = new_cfg["transcriber"]["language"]
+        self.config = new_cfg
+        log.info("config recarregada: %s", changed or "nada mudou")
+        return {
+            "ok": True,
+            "reloaded_at": datetime.now().isoformat(timespec="seconds"),
+            "changes": changed,
+        }
+
     # ── background loops ───────────────────────────────────────────────────
     async def _watchdog_loop(self) -> None:
         last_silence_check = 0.0
@@ -323,9 +368,31 @@ class Daemon:
                         self.silence_streak = 0.0
 
     async def _auto_detect_loop(self) -> None:
+        """Event-driven: acorda em eventos `pactl subscribe` OU tick de liveness.
+
+        Em vez de polling cego a cada 5s, ouvimos eventos do PulseAudio (novos
+        source-outputs = app começou a usar mic). Tick de liveness garante
+        recovery se a subscribe morrer, e ainda permite re-checagem para o
+        filtro `min_mic_duration_seconds`.
+        """
+        self._auto_detect_event = asyncio.Event()
+        sub_task = asyncio.create_task(self._pactl_subscribe_loop(), name="pactl-subscribe")
+        self._tasks.append(sub_task)
+
         while True:
             cfg = load_auto_detect_config()
-            await asyncio.sleep(cfg.get("poll_interval_seconds", 5))
+            poll = cfg.get("poll_interval_seconds", 5)
+            min_dur = cfg.get("min_mic_duration_seconds", 8)
+            # Tick liveness: max(poll, min_dur) — garante que conseguimos
+            # confirmar persistência mesmo sem novos eventos.
+            tick = max(poll, min_dur)
+
+            try:
+                await asyncio.wait_for(self._auto_detect_event.wait(), timeout=tick)
+            except TimeoutError:
+                pass  # fallback periódico — comportamento legacy garantido
+            self._auto_detect_event.clear()
+
             if not cfg.get("enabled", False):
                 continue
             if self.recorder and self.recorder.recording:
@@ -334,7 +401,9 @@ class Daemon:
             if self.last_stop_mono and (time.monotonic() - self.last_stop_mono) < quiet:
                 continue
 
-            app = await asyncio.get_event_loop().run_in_executor(None, detect_active_call, cfg)
+            app = await asyncio.get_event_loop().run_in_executor(
+                self._pipeline_executor, detect_active_call, cfg,
+            )
             if not app:
                 self._auto_detect_first_seen.clear()
                 continue
@@ -344,8 +413,49 @@ class Daemon:
             if first is None:
                 self._auto_detect_first_seen[app] = now
                 continue
-            if now - first < cfg.get("min_mic_duration_seconds", 8):
+            if now - first < min_dur:
                 continue
             self._auto_detect_first_seen.clear()
             log.info("auto-detect: %s ativo — iniciando gravação", app)
             await self._cmd_start({"auto": True, "subject": detect_subject()})
+
+    async def _pactl_subscribe_loop(self) -> None:
+        """Roda `pactl subscribe`, marca evento quando há atividade source-output.
+
+        Reinicia em loop se pactl morrer (ex: PulseAudio restart). Falha
+        silenciosa se pactl não existir — auto-detect ainda funciona via
+        polling fallback do _auto_detect_loop.
+        """
+        while True:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "pactl", "subscribe",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                    env={**os.environ, "LANG": "C", "LC_ALL": "C"},
+                )
+            except FileNotFoundError:
+                log.warning("pactl ausente — auto-detect só com polling fallback")
+                return
+
+            try:
+                assert proc.stdout is not None
+                while True:
+                    line = await proc.stdout.readline()
+                    if not line:
+                        log.warning("pactl subscribe encerrou (rc=%s) — retry em 5s",
+                                    proc.returncode)
+                        break
+                    decoded = line.decode("utf-8", errors="ignore")
+                    # Eventos relevantes: source-output (cliente começou/parou de capturar)
+                    if "source-output" in decoded:
+                        if hasattr(self, "_auto_detect_event"):
+                            self._auto_detect_event.set()
+            finally:
+                if proc.returncode is None:
+                    proc.terminate()
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=2)
+                    except TimeoutError:
+                        proc.kill()
+            await asyncio.sleep(5)  # backoff antes de re-subscrever

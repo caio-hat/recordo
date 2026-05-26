@@ -4,8 +4,13 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass
+
+
+def _has_command(name: str) -> bool:
+    return shutil.which(name) is not None
 
 
 @dataclass
@@ -131,8 +136,93 @@ def detect_active_call(cfg: dict) -> str | None:
     return None
 
 
-def measure_mic_db(source: str, sample_seconds: int = 3) -> float | None:
-    """RMS dB do mic via ffmpeg volumedetect num snapshot curto."""
+def measure_mic_db(source: str, sample_seconds: int = 1) -> float | None:
+    """RMS dB do mic via `parec` (cliente nativo PulseAudio, leve).
+
+    Por que não ffmpeg+volumedetect:
+      ffmpeg abre um segundo stream de captura, o que em hardware limitado
+      pode disparar reconfig do device e dropar samples no recorder principal.
+      `parec` é parte do `pulseaudio-utils` (já é dep do setup.sh) e
+      compartilha a source com baixíssima latência.
+
+    Implementação:
+      Lemos `sample_seconds` segundos de PCM s16le mono @16kHz, calculamos
+      RMS, convertemos pra dBFS. Retorna None se falhar.
+
+    Fallback:
+      Se parec sumir do PATH ou falhar, tenta ffmpeg+volumedetect (legacy).
+    """
+    db = _measure_mic_db_parec(source, sample_seconds)
+    if db is not None:
+        return db
+    return _measure_mic_db_ffmpeg(source, sample_seconds)
+
+
+def _measure_mic_db_parec(source: str, sample_seconds: int) -> float | None:
+    """RMS via parec (preferido)."""
+    if not _has_command("parec"):
+        return None
+    rate = 16000
+    channels = 1
+    cmd = [
+        "parec",
+        "--device", source,
+        "--rate", str(rate),
+        "--channels", str(channels),
+        "--format", "s16le",
+        "--raw",
+    ]
+    expected_bytes = rate * channels * 2 * sample_seconds
+    try:
+        # Inicia parec, lê N bytes, mata. Mais barato que rodar ffmpeg full.
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        try:
+            data = b""
+            deadline = sample_seconds + 1.0
+            import time as _time
+            start = _time.monotonic()
+            while len(data) < expected_bytes and (_time.monotonic() - start) < deadline:
+                chunk = proc.stdout.read(min(4096, expected_bytes - len(data)))  # type: ignore[union-attr]
+                if not chunk:
+                    break
+                data += chunk
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+    except (FileNotFoundError, OSError):
+        return None
+    if len(data) < 2:
+        return None
+
+    return _rms_dbfs_s16le(data)
+
+
+def _rms_dbfs_s16le(data: bytes) -> float:
+    """RMS em dBFS para PCM s16 little-endian."""
+    import array
+    import math
+
+    samples = array.array("h")
+    samples.frombytes(data[: (len(data) // 2) * 2])
+    if not samples:
+        return -100.0
+    n = len(samples)
+    # Cálculo manual evita dep de numpy. Para 16k/1s = 16k iterações, OK.
+    sumsq = 0
+    for s in samples:
+        sumsq += s * s
+    rms = math.sqrt(sumsq / n)
+    if rms < 1e-9:
+        return -100.0
+    # 32768 = max int16 (full scale)
+    return 20 * math.log10(rms / 32768.0)
+
+
+def _measure_mic_db_ffmpeg(source: str, sample_seconds: int) -> float | None:
+    """Legacy fallback: ffmpeg + volumedetect."""
     cmd = [
         "ffmpeg",
         "-hide_banner",

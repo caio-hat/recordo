@@ -68,10 +68,26 @@ def build_merge_cmd(sys_file: Path, mic_file: Path, output: Path, layout: str, b
     return [*base, "-filter_complex", fcomplex, "-map", "[out]", *common_out]
 
 
-def build_concat_cmd(segments: list[Path], list_path: Path, output: Path, bitrate: str = "48k") -> list[str]:
-    """Concatena vários segmentos com reencode (evita problemas de timestamps)."""
+def build_concat_cmd(
+    segments: list[Path],
+    list_path: Path,
+    output: Path,
+    bitrate: str = "48k",
+    *,
+    reencode: bool = False,
+) -> list[str]:
+    """Concatena vários segmentos.
+
+    Por padrão usa `-c copy` — rápido e lossless quando todos os segmentos
+    compartilham codec/bitrate/layout (caso normal: gravação com mesmas
+    configs do começo ao fim).
+
+    Use `reencode=True` quando segmentos forem heterogêneos (ex: user trocou
+    layout merge/split em runtime). O caller (Recorder.finalize) é quem
+    detecta a heterogeneidade.
+    """
     list_path.write_text("".join(f"file '{p.as_posix()}'\n" for p in segments))
-    return [
+    base = [
         "ffmpeg",
         "-hide_banner",
         "-loglevel",
@@ -82,12 +98,17 @@ def build_concat_cmd(segments: list[Path], list_path: Path, output: Path, bitrat
         "0",
         "-i",
         str(list_path),
-        "-c:a",
-        "libopus",
-        "-b:a",
-        bitrate,
-        "-application",
-        "voip",
-        "-y",
-        str(output),
     ]
+    if reencode:
+        return [
+            *base,
+            "-c:a",
+            "libopus",
+            "-b:a",
+            bitrate,
+            "-application",
+            "voip",
+            "-y",
+            str(output),
+        ]
+    return [*base, "-c", "copy", "-y", str(output)]

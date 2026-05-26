@@ -10,10 +10,20 @@ if [[ ! -S "$SOCK" ]]; then
     exit 1
 fi
 
+# Status JSON é estruturado: parser robusto via jq -e (jq é dep do setup.sh).
+# Fallback p/ grep só se jq sumir do PATH por algum motivo.
 STATUS=$(recordo --status 2>/dev/null || true)
-if ! echo "$STATUS" | grep -q '"recording": true'; then
-    notify-send -a Recordo -i dialog-warning "Recordo" "Nenhuma gravação ativa."
-    exit 1
+if command -v jq >/dev/null; then
+    if ! echo "$STATUS" | jq -e '.recording == true' >/dev/null 2>&1; then
+        notify-send -a Recordo -i dialog-warning "Recordo" "Nenhuma gravação ativa."
+        exit 1
+    fi
+else
+    # legacy fallback (não deveria acontecer — jq é instalado pelo setup.sh)
+    if ! echo "$STATUS" | grep -qE '"recording"\s*:\s*true'; then
+        notify-send -a Recordo -i dialog-warning "Recordo" "Nenhuma gravação ativa."
+        exit 1
+    fi
 fi
 
 if command -v zenity >/dev/null; then

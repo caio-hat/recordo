@@ -32,6 +32,8 @@ class Segment:
     duration: float = 0.0
     size_bytes: int = 0
     status: str = "pending"  # pending|recording|merged|empty|error
+    layout: str = "merge"  # merge|split — capturado quando o segmento foi mergeado
+    bitrate: str = "32k"
 
 
 @dataclass
@@ -96,6 +98,8 @@ class Recorder:
             mic_file=str(self.dir / f"seg{idx:03d}_mic.opus"),
             merged_file=str(self.dir / f"seg{idx:03d}_merged.opus"),
             status="recording",
+            layout=self.layout,
+            bitrate=self.state.bitrate,
         )
         self.current = seg
 
@@ -154,7 +158,7 @@ class Recorder:
 
     def _merge(self, seg: Segment) -> bool:
         cmd = build_merge_cmd(
-            Path(seg.sys_file), Path(seg.mic_file), Path(seg.merged_file), self.layout, self.state.bitrate
+            Path(seg.sys_file), Path(seg.mic_file), Path(seg.merged_file), seg.layout, seg.bitrate
         )
         if not cmd:
             seg.status = "empty"
@@ -204,7 +208,18 @@ class Recorder:
         safe = re.sub(r"[^A-Za-z0-9_-]+", "_", self.state.subject).strip("_") or "Gravacao"
         final = self.dir / f"{safe}_{self.state.session_id}.opus"
         list_file = self.dir / "_concat_list.txt"
-        cmd = build_concat_cmd(merged, list_file, final)
+
+        # Heterogeneidade força reencode (caso edge: layout/bitrate trocou no meio)
+        valid_segs = [s for s in self.state.segments if s.status == "merged"]
+        layouts = {s.layout for s in valid_segs}
+        bitrates = {s.bitrate for s in valid_segs}
+        heterogeneous = len(layouts) > 1 or len(bitrates) > 1
+        if heterogeneous:
+            log.info("concat com reencode (segmentos heterogêneos: layouts=%s bitrates=%s)",
+                     layouts, bitrates)
+        cmd = build_concat_cmd(
+            merged, list_file, final, bitrate=self.state.bitrate, reencode=heterogeneous,
+        )
         try:
             subprocess.run(cmd, check=True, capture_output=True, text=True)
             self.state.finished = True

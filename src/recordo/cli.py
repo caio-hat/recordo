@@ -94,7 +94,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "-T", "--transcribe", action="store_true", help="Transcreve arquivo final com faster-whisper"
     )
-    p.add_argument("--whisper-model", default="base", help="Modelo Whisper (tiny|base|small|medium|large-v3)")
+    p.add_argument(
+        "--whisper-model",
+        default="large-v3-turbo",
+        help="Modelo Whisper (tiny|base|small|medium|large-v3|large-v3-turbo|distil-large-v3)",
+    )
     p.add_argument("--language", default="pt", help="Idioma para transcrição (default pt)")
     p.add_argument("--resume", action="store_true", help="Retoma sessão anterior incompleta")
     p.add_argument("-v", "--verbose", action="store_true", help="Logs verbose")
@@ -115,6 +119,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Marca momento na gravação ativa (texto opcional)",
     )
     g.add_argument("--quit-daemon", action="store_true", help="Encerra daemon graciosamente")
+    g.add_argument(
+        "--reload-config",
+        action="store_true",
+        help="Recarrega config.toml no daemon sem restart",
+    )
+    g.add_argument("--gui", action="store_true", help="Abre a GUI desktop (GTK4 + libadwaita)")
+    g.add_argument(
+        "--tui",
+        action="store_true",
+        help="Abre a TUI Textual moderna (auto-conecta no daemon, sobe se preciso)",
+    )
     return p
 
 
@@ -130,10 +145,44 @@ def _dispatch_client(args: argparse.Namespace) -> int:
         resp = send_to_daemon("mark", text=args.mark)
     elif args.quit_daemon:
         resp = send_to_daemon("quit")
+    elif args.reload_config:
+        resp = send_to_daemon("reload_config")
     else:
         return -1  # not a client command
     print(json.dumps(resp, ensure_ascii=False, indent=2 if args.status else None))
     return 0 if resp.get("ok") else 1
+
+
+def _run_gui(args: argparse.Namespace) -> int:
+    """Lança GUI GTK4. Lazy import (deps opcionais via apt)."""
+    try:
+        from recordo.gui.app import main as gui_main
+    except ImportError as e:
+        console.print(f"[red]GUI indisponível:[/red] {e}")
+        if "gi" in str(e) or "gobject" in str(e).lower():
+            # Diagnóstico mais útil pra o caso mais comum:
+            # python3-gi instalado no system, mas venv sem system-site-packages
+            console.print(
+                "\n[yellow]Diagnóstico:[/yellow] PyGObject (python3-gi) é "
+                "fornecido via apt e precisa ficar visível dentro do venv."
+            )
+            console.print(
+                "Se você já rodou `sudo apt install python3-gi gir1.2-gtk-4.0 "
+                "gir1.2-adw-1`, o venv pode ter sido criado sem "
+                "`--system-site-packages`."
+            )
+            console.print("\n[bold]Correção:[/bold] rode `bash setup.sh` (auto-conserta) ou:")
+            console.print(
+                "  [cyan]sed -i 's/^include-system-site-packages = false/"
+                "include-system-site-packages = true/' "
+                "~/.local/share/recordo/venv/pyvenv.cfg[/cyan]"
+            )
+        else:
+            console.print(
+                "Instale: sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1"
+            )
+        return 1
+    return gui_main()
 
 
 def _run_daemon(args: argparse.Namespace) -> int:
@@ -229,6 +278,12 @@ def main() -> int:
     if rc != -1:
         return rc
 
+    if args.gui:
+        return _run_gui(args)
+    if args.tui:
+        from .tui_textual import run_textual_tui
+
+        return run_textual_tui()
     if args.daemon:
         return _run_daemon(args)
     return _run_standalone(args)
