@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Recordo logo small">
+  <title>Recordo</title>
+  <desc>Versão otimizada para 32x32 e abaixo: círculo record + R em destaque</desc>
+
+  <defs>
+    <radialGradient id="recGradSmall" cx="0.5" cy="0.45" r="0.6">
+      <stop offset="0%" stop-color="#ff6b6b"/>
+      <stop offset="55%" stop-color="#e53e3e"/>
+      <stop offset="100%" stop-color="#9b2c2c"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Botão record dominando o canvas (raio 14 num 32px) -->
+  <circle cx="16" cy="16" r="14" fill="url(#recGradSmall)"/>
+
+  <!-- R bold em branco, otimizado para legibilidade em pixel grids pequenos -->
+  <text x="16" y="22.5" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
+        font-weight="900" font-size="22" fill="#ffffff"
+        text-anchor="middle" letter-spacing="-1">R</text>
+</svg>
