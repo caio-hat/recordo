@@ -88,7 +88,9 @@ class TestRecorderLifecycle:
         assert len(fake_ffmpeg) == 2
 
     def test_start_segment_idempotent_when_already_recording(
-        self, session_state, fake_ffmpeg,
+        self,
+        session_state,
+        fake_ffmpeg,
     ):
         rec = Recorder(session_state, max_segment=1800, layout="merge")
         rec.start_segment()
@@ -140,7 +142,10 @@ class TestRecorderLifecycle:
         assert rec.finalize() is None
 
     def test_finalize_homogeneous_uses_copy(
-        self, session_state, fake_ffmpeg, monkeypatch,
+        self,
+        session_state,
+        fake_ffmpeg,
+        monkeypatch,
     ):
         """Todos os segmentos com mesmo layout/bitrate → -c copy."""
         captured_cmd = []
@@ -167,7 +172,10 @@ class TestRecorderLifecycle:
         assert "libopus" not in concat_cmd
 
     def test_finalize_heterogeneous_forces_reencode(
-        self, session_state, fake_ffmpeg, monkeypatch,
+        self,
+        session_state,
+        fake_ffmpeg,
+        monkeypatch,
     ):
         """Layout trocou → reencode (libopus)."""
         captured_cmd = []
@@ -191,13 +199,17 @@ class TestRecorderLifecycle:
         assert "libopus" in concat_cmd
 
     def test_watchdog_tick_cycles_segment(
-        self, session_state, fake_ffmpeg, monkeypatch,
+        self,
+        session_state,
+        fake_ffmpeg,
+        monkeypatch,
     ):
         """Quando elapsed >= max_segment, watchdog_tick rotaciona segmento."""
         rec = Recorder(session_state, max_segment=1, layout="merge")
         rec.start_segment()
         # Simula passagem do tempo
         import time
+
         rec.seg_start_mono = time.monotonic() - 2.0  # passou 2s, max=1
         ev = rec.watchdog_tick()
         assert ev == "cycled"
@@ -205,7 +217,9 @@ class TestRecorderLifecycle:
         assert len(rec.state.segments) == 1  # primeiro fechado, segundo aberto
 
     def test_watchdog_tick_detects_died_processes(
-        self, session_state, fake_ffmpeg,
+        self,
+        session_state,
+        fake_ffmpeg,
     ):
         rec = Recorder(session_state, max_segment=1800, layout="merge")
         rec.start_segment()

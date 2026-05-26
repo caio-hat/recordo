@@ -40,8 +40,7 @@ class ParakeetTranscriber(Transcriber):
             import nemo.collections.asr as nemo_asr  # type: ignore[import-not-found]
         except ImportError as e:
             raise RuntimeError(
-                "Parakeet backend requer nemo_toolkit[asr]. "
-                "Instale com: bash setup.sh --with-parakeet"
+                "Parakeet backend requer nemo_toolkit[asr]. Instale com: bash setup.sh --with-parakeet"
             ) from e
 
         log.info("carregando Parakeet '%s'", self.model_name)
@@ -58,10 +57,18 @@ class ParakeetTranscriber(Transcriber):
 
         tmp_wav = Path(tempfile.mkstemp(suffix=".wav", prefix="recordo-parakeet-")[1])
         cmd = [
-            "ffmpeg", "-hide_banner", "-loglevel", "error",
-            "-i", str(audio),
-            "-ac", "1", "-ar", "16000",  # mono 16kHz
-            "-y", str(tmp_wav),
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(audio),
+            "-ac",
+            "1",
+            "-ar",
+            "16000",  # mono 16kHz
+            "-y",
+            str(tmp_wav),
         ]
         log.info("convertendo %s → wav 16kHz mono", audio.name)
         try:

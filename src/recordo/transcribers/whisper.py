@@ -32,10 +32,14 @@ class WhisperTranscriber(Transcriber):
 
         log.info(
             "carregando Whisper '%s' device=%s compute=%s",
-            self.model_name, self.device, self.compute_type,
+            self.model_name,
+            self.device,
+            self.compute_type,
         )
         self._model = WhisperModel(
-            self.model_name, device=self.device, compute_type=self.compute_type,
+            self.model_name,
+            device=self.device,
+            compute_type=self.compute_type,
         )
         return self._model
 
@@ -51,13 +55,12 @@ class WhisperTranscriber(Transcriber):
             vad_parameters={"min_silence_duration_ms": 500} if self.vad_filter else None,
         )
 
-        segments = [
-            TranscriptionSegment(start=s.start, end=s.end, text=s.text)
-            for s in seg_iter
-        ]
+        segments = [TranscriptionSegment(start=s.start, end=s.end, text=s.text) for s in seg_iter]
         log.info(
             "whisper: %d segmentos, idioma=%s prob=%.2f",
-            len(segments), info.language, info.language_probability,
+            len(segments),
+            info.language,
+            info.language_probability,
         )
         return TranscriptionResult(
             segments=segments,

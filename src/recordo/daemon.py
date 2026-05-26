@@ -69,7 +69,8 @@ class Daemon:
         # 2 workers: 1 pode estar rodando finalize+concat enquanto o próximo
         # toggle já começa nova sessão, sem fila no executor default do asyncio.
         self._pipeline_executor = ThreadPoolExecutor(
-            max_workers=2, thread_name_prefix="recordo-pipeline",
+            max_workers=2,
+            thread_name_prefix="recordo-pipeline",
         )
 
     # ── lifecycle ──────────────────────────────────────────────────────────
@@ -210,7 +211,9 @@ class Daemon:
             target = await loop.run_in_executor(
                 self._pipeline_executor,
                 lambda: post_pipeline(
-                    state, final, self.marks,
+                    state,
+                    final,
+                    self.marks,
                     config=self.config,
                     language=self.language,
                 ),
@@ -402,7 +405,9 @@ class Daemon:
                 continue
 
             app = await asyncio.get_event_loop().run_in_executor(
-                self._pipeline_executor, detect_active_call, cfg,
+                self._pipeline_executor,
+                detect_active_call,
+                cfg,
             )
             if not app:
                 self._auto_detect_first_seen.clear()
@@ -429,7 +434,8 @@ class Daemon:
         while True:
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    "pactl", "subscribe",
+                    "pactl",
+                    "subscribe",
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.DEVNULL,
                     env={**os.environ, "LANG": "C", "LC_ALL": "C"},
@@ -443,8 +449,7 @@ class Daemon:
                 while True:
                     line = await proc.stdout.readline()
                     if not line:
-                        log.warning("pactl subscribe encerrou (rc=%s) — retry em 5s",
-                                    proc.returncode)
+                        log.warning("pactl subscribe encerrou (rc=%s) — retry em 5s", proc.returncode)
                         break
                     decoded = line.decode("utf-8", errors="ignore")
                     # Eventos relevantes: source-output (cliente começou/parou de capturar)

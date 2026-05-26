@@ -50,16 +50,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Validate JSON files
         run: |
-          for f in config/*.example .github/**/*.yml; do
-            case "$f" in
-              *.json|*.example) python3 -m json.tool < "$f" > /dev/null ;;
-            esac
+          for f in $(find . -name "*.json" -o -name "*.json.example" 2>/dev/null); do
+            echo "Validating JSON: $f"
+            python3 -m json.tool < "$f" > /dev/null
+          done
+
+      - name: Validate TOML files
+        run: |
+          # tomllib é stdlib em 3.11+
+          for f in $(find config/ -name "*.toml" -o -name "*.toml.example" 2>/dev/null); do
+            echo "Validating TOML: $f"
+            python3 -c "import tomllib; tomllib.loads(open('$f').read())"
           done
 
       - name: Validate SVG files
         run: |
-          for f in assets/*.svg; do
+          for f in $(find assets/ share/icons/ -name "*.svg"); do
+            echo "Validating SVG: $f"
             python3 -c "import xml.etree.ElementTree as ET; ET.parse('$f')"
+          done
+
+      - name: Validate .desktop files
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y desktop-file-utils
+          for f in $(find share/applications/ -name "*.desktop"); do
+            echo "Validating desktop: $f"
+            desktop-file-validate "$f"
           done

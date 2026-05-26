@@ -13,15 +13,20 @@ from ..pipeline import retranscribe
 
 log = logging.getLogger(__name__)
 
-WHISPER_MODELS = ["tiny", "base", "small", "medium",
-                  "large-v3", "large-v3-turbo", "distil-large-v3"]
+WHISPER_MODELS = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo", "distil-large-v3"]
 BACKENDS = ["whisper", "parakeet"]
 
 
 class TranscribePage(Gtk.Box):
     def __init__(self, window):
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12,
-                         margin_top=24, margin_bottom=24, margin_start=24, margin_end=24)
+        super().__init__(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=12,
+            margin_top=24,
+            margin_bottom=24,
+            margin_start=24,
+            margin_end=24,
+        )
         self.window = window
         self.cfg = load_config()
         self._current_dir: Path | None = None
@@ -60,8 +65,9 @@ class TranscribePage(Gtk.Box):
         options_group.add(self.whisper_model_row)
 
         # ── Run + progress ───────────────────────────────────────────────────
-        run_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12,
-                          halign=Gtk.Align.CENTER, margin_top=12)
+        run_box = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL, spacing=12, halign=Gtk.Align.CENTER, margin_top=12
+        )
         self.append(run_box)
 
         self.btn_run = Gtk.Button(label="✎ Re-transcrever")
@@ -90,7 +96,8 @@ class TranscribePage(Gtk.Box):
 
         dirs = sorted(
             (d for d in NOTAS_DIR.iterdir() if d.is_dir() and (d / "audio.opus").exists()),
-            key=lambda d: d.stat().st_mtime, reverse=True,
+            key=lambda d: d.stat().st_mtime,
+            reverse=True,
         )[:30]
         if not dirs:
             empty = Adw.ActionRow(title="Nenhuma gravação com audio.opus encontrada")
@@ -131,7 +138,8 @@ class TranscribePage(Gtk.Box):
         def worker():
             try:
                 result = retranscribe(
-                    target, backend=backend,
+                    target,
+                    backend=backend,
                     transcriber_cfg=transcriber_cfg,
                     language=self.cfg["transcriber"]["language"],
                 )
@@ -154,8 +162,6 @@ class TranscribePage(Gtk.Box):
             self.status_label.set_text(f"Erro: {error}")
             self.window.toast(f"Falhou: {error}")
         else:
-            self.status_label.set_text(
-                f"✓ {len(result.segments)} segmentos · backend={result.backend}"
-            )
+            self.status_label.set_text(f"✓ {len(result.segments)} segmentos · backend={result.backend}")
             self.window.toast(f"Re-transcrito com {result.backend}")
         return GLib.SOURCE_REMOVE

@@ -35,9 +35,8 @@ _PATTERNS: list[tuple[str, str]] = [
 
 def _is_wayland() -> bool:
     """Heurística simples: WAYLAND_DISPLAY ou XDG_SESSION_TYPE=wayland."""
-    return (
-        os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
-        or bool(os.environ.get("WAYLAND_DISPLAY"))
+    return os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland" or bool(
+        os.environ.get("WAYLAND_DISPLAY")
     )
 
 
@@ -64,7 +63,9 @@ def _try_x11_wmctrl() -> str:
     try:
         out = subprocess.check_output(
             ["wmctrl", "-a", ":ACTIVE:", "-v"],
-            text=True, stderr=subprocess.PIPE, timeout=2,
+            text=True,
+            stderr=subprocess.PIPE,
+            timeout=2,
         )
         # output formato: "Using window: 0xNNN" — não é título
         # melhor: 'wmctrl -lp' + parse pelo PID ativo. Mais frágil. Skip.
@@ -82,8 +83,7 @@ def _try_wayland_sway() -> str:
             out = subprocess.check_output(cmd, text=True, timeout=2)
             tree = json.loads(out)
             return _find_focused_title(tree) or ""
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
-                json.JSONDecodeError):
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, json.JSONDecodeError):
             continue
     return ""
 
@@ -106,12 +106,13 @@ def _try_wayland_hyprland() -> str:
         return ""
     try:
         out = subprocess.check_output(
-            ["hyprctl", "activewindow", "-j"], text=True, timeout=2,
+            ["hyprctl", "activewindow", "-j"],
+            text=True,
+            timeout=2,
         )
         data = json.loads(out)
         return data.get("title", "") or ""
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
-            json.JSONDecodeError):
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, json.JSONDecodeError):
         return ""
 
 

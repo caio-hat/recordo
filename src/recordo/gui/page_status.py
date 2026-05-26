@@ -18,8 +18,14 @@ log = logging.getLogger(__name__)
 
 class StatusPage(Gtk.Box):
     def __init__(self, window):
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12,
-                         margin_top=24, margin_bottom=24, margin_start=24, margin_end=24)
+        super().__init__(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=12,
+            margin_top=24,
+            margin_bottom=24,
+            margin_start=24,
+            margin_end=24,
+        )
         self.window = window
 
         self.card = StatusCard()

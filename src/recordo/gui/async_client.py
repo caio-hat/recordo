@@ -40,6 +40,7 @@ def call_async(
 
         call_async("toggle", on_response)
     """
+
     def _worker() -> None:
         try:
             resp = send_to_daemon(cmd, **kwargs)
@@ -50,7 +51,9 @@ def call_async(
             GLib.idle_add(callback, resp)
 
     threading.Thread(
-        target=_worker, daemon=True, name=f"recordo-gui-{cmd}",
+        target=_worker,
+        daemon=True,
+        name=f"recordo-gui-{cmd}",
     ).start()
 
 

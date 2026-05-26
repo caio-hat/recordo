@@ -138,10 +138,7 @@ class StatusPanel(Static):
             )
         if not s.get("recording"):
             since = s.get("since_last_stop_seconds")
-            since_h = (
-                f"\n[dim]Última parada: há {int(since/60)}min[/dim]"
-                if since else ""
-            )
+            since_h = f"\n[dim]Última parada: há {int(since / 60)}min[/dim]" if since else ""
             return (
                 "[bold cyan]○ Idle[/bold cyan]  "
                 "[dim]daemon ativo, aguardando comando[/dim]\n\n"
@@ -152,9 +149,7 @@ class StatusPanel(Static):
         elapsed = s.get("elapsed_seconds", 0)
         h, rem = divmod(elapsed, 3600)
         m, sec = divmod(rem, 60)
-        elapsed_h = (
-            f"{h:02d}:{m:02d}:{sec:02d}" if h else f"{m:02d}:{sec:02d}"
-        )
+        elapsed_h = f"{h:02d}:{m:02d}:{sec:02d}" if h else f"{m:02d}:{sec:02d}"
         auto = " [dim italic](auto)[/dim italic]" if s.get("auto_started") else ""
         return (
             f"[bold red]● GRAVANDO[/bold red]{auto}  [bold]{elapsed_h}[/bold]\n"
@@ -298,7 +293,8 @@ class RecordoTUI(App):
     async def on_mount(self) -> None:
         if self.auto_start_daemon:
             ok = await asyncio.get_event_loop().run_in_executor(
-                None, ensure_daemon,
+                None,
+                ensure_daemon,
             )
             if not ok:
                 self.notify(
@@ -324,10 +320,7 @@ class RecordoTUI(App):
         from .sources import list_sources
 
         sources = await asyncio.get_event_loop().run_in_executor(None, list_sources)
-        data = [
-            {"name": s.name, "kind": s.kind, "state": s.state, "score": s.score}
-            for s in sources
-        ]
+        data = [{"name": s.name, "kind": s.kind, "state": s.state, "score": s.score} for s in sources]
         self.query_one("#devices-panel", DevicesPanel).sources_data = data
 
     async def _refresh_recent(self) -> None:
@@ -374,7 +367,7 @@ class RecordoTUI(App):
             mark = resp.get("mark", {})
             ts = mark.get("ts_seconds", 0)
             self.notify(
-                f"Marca [{int(ts//60):02d}:{int(ts%60):02d}] registrada.",
+                f"Marca [{int(ts // 60):02d}:{int(ts % 60):02d}] registrada.",
                 severity="information",
             )
         else:
@@ -402,11 +395,7 @@ class RecordoTUI(App):
     # ── Helpers ─────────────────────────────────────────────────────────────
     def _toast_response(self, resp: dict) -> None:
         if resp.get("ok"):
-            msg = (
-                resp.get("subject")
-                or resp.get("target_dir")
-                or "OK"
-            )
+            msg = resp.get("subject") or resp.get("target_dir") or "OK"
             self.notify(f"✓ {msg}", severity="information")
         else:
             self.notify(

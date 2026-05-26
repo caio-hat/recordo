@@ -21,19 +21,23 @@ log = logging.getLogger(__name__)
 
 class ControlPage(Gtk.Box):
     def __init__(self, window):
-        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=12,
-                         margin_top=24, margin_bottom=24, margin_start=24, margin_end=24)
+        super().__init__(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=12,
+            margin_top=24,
+            margin_bottom=24,
+            margin_start=24,
+            margin_end=24,
+        )
         self.window = window
 
         # ── Botões ───────────────────────────────────────────────────────────
-        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12,
-                          halign=Gtk.Align.CENTER)
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12, halign=Gtk.Align.CENTER)
         self.append(btn_box)
 
         self.btn_toggle = Gtk.Button(label="● Iniciar / Parar")
         self.btn_toggle.set_tooltip_text(
-            "Alterna gravação (start se idle, stop se ativa). "
-            "Equivalente ao atalho Super+R."
+            "Alterna gravação (start se idle, stop se ativa). Equivalente ao atalho Super+R."
         )
         self.btn_toggle.add_css_class("pill")
         self.btn_toggle.add_css_class("suggested-action")
@@ -42,8 +46,7 @@ class ControlPage(Gtk.Box):
 
         self.btn_mark = Gtk.Button(label="📍 Marcar")
         self.btn_mark.set_tooltip_text(
-            "Registra timestamp + nota opcional na gravação atual. "
-            "Equivalente ao atalho Super+Shift+M."
+            "Registra timestamp + nota opcional na gravação atual. Equivalente ao atalho Super+Shift+M."
         )
         self.btn_mark.add_css_class("pill")
         self.btn_mark.connect("clicked", self._on_mark)
@@ -51,8 +54,7 @@ class ControlPage(Gtk.Box):
 
         self.btn_stop = Gtk.Button(label="⏹ Parar")
         self.btn_stop.set_tooltip_text(
-            "Encerra gravação ativa, faz merge dos segmentos e dispara "
-            "transcrição em background."
+            "Encerra gravação ativa, faz merge dos segmentos e dispara transcrição em background."
         )
         self.btn_stop.add_css_class("pill")
         self.btn_stop.add_css_class("destructive-action")
@@ -91,7 +93,8 @@ class ControlPage(Gtk.Box):
     def _on_mark(self, _btn) -> None:
         # Diálogo simples Adw pra texto opcional
         dlg = Adw.MessageDialog(
-            transient_for=self.window, modal=True,
+            transient_for=self.window,
+            modal=True,
             heading="📍 Marcar momento",
             body="Texto opcional (vazio = só timestamp):",
         )
@@ -142,14 +145,14 @@ class ControlPage(Gtk.Box):
             self.listbox.remove(child)
 
         if not NOTAS_DIR.exists():
-            empty = Adw.ActionRow(title="Nenhuma gravação ainda",
-                                  subtitle=f"Crie em {NOTAS_DIR}")
+            empty = Adw.ActionRow(title="Nenhuma gravação ainda", subtitle=f"Crie em {NOTAS_DIR}")
             self.listbox.append(empty)
             return
 
         dirs = sorted(
             (d for d in NOTAS_DIR.iterdir() if d.is_dir() and d.name.startswith("2")),
-            key=lambda d: d.stat().st_mtime, reverse=True,
+            key=lambda d: d.stat().st_mtime,
+            reverse=True,
         )[:20]
 
         if not dirs:
@@ -165,7 +168,6 @@ class ControlPage(Gtk.Box):
     @staticmethod
     def _open_recording(path: Path) -> None:
         try:
-            subprocess.Popen(["xdg-open", str(path)],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.Popen(["xdg-open", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except FileNotFoundError:
             log.warning("xdg-open não disponível")

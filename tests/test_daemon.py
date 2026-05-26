@@ -51,13 +51,15 @@ def fake_recorder(monkeypatch):
     # Mocka list_sources e auto_pick
     monkeypatch.setattr(daemon_mod, "list_sources", lambda: ["mock_source"])
     monkeypatch.setattr(
-        daemon_mod, "auto_pick",
+        daemon_mod,
+        "auto_pick",
         lambda sources: ("alsa_input.test", "alsa_output.test.monitor"),
     )
 
     # Mocka make_session: cria uma SessionState mínima
     def fake_make_session(subject, mic, sys_, **kw):
         from recordo.recorder import SessionState
+
         out = Path(kw.get("base_dir", "/tmp")) / f"{subject}_test"
         out.mkdir(parents=True, exist_ok=True)
         return SessionState(
@@ -127,20 +129,39 @@ async def _stop_daemon(task: asyncio.Task) -> None:
 
 @pytest.mark.asyncio
 async def test_status_on_idle_daemon(fake_socket, fake_recorder, fake_notify, tmp_path):
-    d = Daemon(output_dir=tmp_path, config={
-        "general": {"output_dir": str(tmp_path), "notas_dir": str(tmp_path)},
-        "recording": {"bitrate": "32k", "layout": "merge", "max_segment": 1800,
-                      "hard_cap_seconds": 14400},
-        "watchdog": {"silence_threshold_db": -50, "silence_max_seconds": 600,
-                     "silence_check_interval": 30, "reminder_interval": 900},
-        "transcriber": {"backend": "whisper", "language": "pt",
-                        "whisper": {"model": "x"}, "parakeet": {"model": "y"}},
-        "auto_detect": {"enabled": False, "apps": [], "deny_apps": [],
-                        "min_mic_duration_seconds": 8,
-                        "quiet_period_after_stop_minutes": 5,
-                        "poll_interval_seconds": 5},
-        "ui": {"theme": "auto", "window_remember": True, "last_window_geometry": ""},
-    })
+    d = Daemon(
+        output_dir=tmp_path,
+        config={
+            "general": {"output_dir": str(tmp_path), "notas_dir": str(tmp_path)},
+            "recording": {
+                "bitrate": "32k",
+                "layout": "merge",
+                "max_segment": 1800,
+                "hard_cap_seconds": 14400,
+            },
+            "watchdog": {
+                "silence_threshold_db": -50,
+                "silence_max_seconds": 600,
+                "silence_check_interval": 30,
+                "reminder_interval": 900,
+            },
+            "transcriber": {
+                "backend": "whisper",
+                "language": "pt",
+                "whisper": {"model": "x"},
+                "parakeet": {"model": "y"},
+            },
+            "auto_detect": {
+                "enabled": False,
+                "apps": [],
+                "deny_apps": [],
+                "min_mic_duration_seconds": 8,
+                "quiet_period_after_stop_minutes": 5,
+                "poll_interval_seconds": 5,
+            },
+            "ui": {"theme": "auto", "window_remember": True, "last_window_geometry": ""},
+        },
+    )
     task = await _start_daemon_in_task(d)
     try:
         resp = await _send_cmd("status")
@@ -152,20 +173,39 @@ async def test_status_on_idle_daemon(fake_socket, fake_recorder, fake_notify, tm
 
 @pytest.mark.asyncio
 async def test_unknown_command_returns_error(fake_socket, fake_recorder, fake_notify, tmp_path):
-    d = Daemon(output_dir=tmp_path, config={
-        "general": {"output_dir": str(tmp_path), "notas_dir": str(tmp_path)},
-        "recording": {"bitrate": "32k", "layout": "merge", "max_segment": 1800,
-                      "hard_cap_seconds": 14400},
-        "watchdog": {"silence_threshold_db": -50, "silence_max_seconds": 600,
-                     "silence_check_interval": 30, "reminder_interval": 900},
-        "transcriber": {"backend": "whisper", "language": "pt",
-                        "whisper": {"model": "x"}, "parakeet": {"model": "y"}},
-        "auto_detect": {"enabled": False, "apps": [], "deny_apps": [],
-                        "min_mic_duration_seconds": 8,
-                        "quiet_period_after_stop_minutes": 5,
-                        "poll_interval_seconds": 5},
-        "ui": {"theme": "auto", "window_remember": True, "last_window_geometry": ""},
-    })
+    d = Daemon(
+        output_dir=tmp_path,
+        config={
+            "general": {"output_dir": str(tmp_path), "notas_dir": str(tmp_path)},
+            "recording": {
+                "bitrate": "32k",
+                "layout": "merge",
+                "max_segment": 1800,
+                "hard_cap_seconds": 14400,
+            },
+            "watchdog": {
+                "silence_threshold_db": -50,
+                "silence_max_seconds": 600,
+                "silence_check_interval": 30,
+                "reminder_interval": 900,
+            },
+            "transcriber": {
+                "backend": "whisper",
+                "language": "pt",
+                "whisper": {"model": "x"},
+                "parakeet": {"model": "y"},
+            },
+            "auto_detect": {
+                "enabled": False,
+                "apps": [],
+                "deny_apps": [],
+                "min_mic_duration_seconds": 8,
+                "quiet_period_after_stop_minutes": 5,
+                "poll_interval_seconds": 5,
+            },
+            "ui": {"theme": "auto", "window_remember": True, "last_window_geometry": ""},
+        },
+    )
     task = await _start_daemon_in_task(d)
     try:
         resp = await _send_cmd("nonsense")
@@ -177,20 +217,39 @@ async def test_unknown_command_returns_error(fake_socket, fake_recorder, fake_no
 
 @pytest.mark.asyncio
 async def test_invalid_json_returns_error(fake_socket, fake_recorder, fake_notify, tmp_path):
-    d = Daemon(output_dir=tmp_path, config={
-        "general": {"output_dir": str(tmp_path), "notas_dir": str(tmp_path)},
-        "recording": {"bitrate": "32k", "layout": "merge", "max_segment": 1800,
-                      "hard_cap_seconds": 14400},
-        "watchdog": {"silence_threshold_db": -50, "silence_max_seconds": 600,
-                     "silence_check_interval": 30, "reminder_interval": 900},
-        "transcriber": {"backend": "whisper", "language": "pt",
-                        "whisper": {"model": "x"}, "parakeet": {"model": "y"}},
-        "auto_detect": {"enabled": False, "apps": [], "deny_apps": [],
-                        "min_mic_duration_seconds": 8,
-                        "quiet_period_after_stop_minutes": 5,
-                        "poll_interval_seconds": 5},
-        "ui": {"theme": "auto", "window_remember": True, "last_window_geometry": ""},
-    })
+    d = Daemon(
+        output_dir=tmp_path,
+        config={
+            "general": {"output_dir": str(tmp_path), "notas_dir": str(tmp_path)},
+            "recording": {
+                "bitrate": "32k",
+                "layout": "merge",
+                "max_segment": 1800,
+                "hard_cap_seconds": 14400,
+            },
+            "watchdog": {
+                "silence_threshold_db": -50,
+                "silence_max_seconds": 600,
+                "silence_check_interval": 30,
+                "reminder_interval": 900,
+            },
+            "transcriber": {
+                "backend": "whisper",
+                "language": "pt",
+                "whisper": {"model": "x"},
+                "parakeet": {"model": "y"},
+            },
+            "auto_detect": {
+                "enabled": False,
+                "apps": [],
+                "deny_apps": [],
+                "min_mic_duration_seconds": 8,
+                "quiet_period_after_stop_minutes": 5,
+                "poll_interval_seconds": 5,
+            },
+            "ui": {"theme": "auto", "window_remember": True, "last_window_geometry": ""},
+        },
+    )
     task = await _start_daemon_in_task(d)
     try:
         loop = asyncio.get_event_loop()

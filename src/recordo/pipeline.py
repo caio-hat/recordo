@@ -37,7 +37,9 @@ def _safe_move(src: Path, dst: Path) -> None:
             size_mb = src.stat().st_size / (1024 * 1024)
             log.warning(
                 "cross-filesystem move: %s → %s (%.1fMB, copy+unlink)",
-                src, dst, size_mb,
+                src,
+                dst,
+                size_mb,
             )
     except FileNotFoundError:
         pass
@@ -90,8 +92,9 @@ def _format_mark(m: Mark) -> str:
     return f"- [{h:02d}:{m_:02d}:{s:02d}] {m.text or '(marca)'}"
 
 
-def _render_nota_md(state: SessionState, marks: list[Mark],
-                    target_dir: Path, backend_name: str = "pending") -> None:
+def _render_nota_md(
+    state: SessionState, marks: list[Mark], target_dir: Path, backend_name: str = "pending"
+) -> None:
     """Gera nota.md inicial com placeholder. Backend nome ajustado depois."""
     duration_min = sum(s.duration for s in state.segments) / 60
     marks_block = "\n".join(_format_mark(m) for m in marks) or "_(nenhuma marca registrada)_"
@@ -177,21 +180,26 @@ def post_pipeline(
 
 
 def _transcribe_async(
-    audio_dst: Path, nota_md: Path, backend: str, transcriber_cfg: dict[str, Any],
-    language: str, target_dir: Path,
+    audio_dst: Path,
+    nota_md: Path,
+    backend: str,
+    transcriber_cfg: dict[str, Any],
+    language: str,
+    target_dir: Path,
 ) -> None:
     try:
         if backend == "whisper" and not ensure_whisper_installed():
-            notify("⚠️ Transcrição indisponível",
-                   "faster-whisper não instalado. Áudio em ~/Notas/.",
-                   urgency="critical")
+            notify(
+                "⚠️ Transcrição indisponível",
+                "faster-whisper não instalado. Áudio em ~/Notas/.",
+                urgency="critical",
+            )
             return
 
         transcriber = get_transcriber(backend, transcriber_cfg)
         result = transcriber.transcribe(audio_dst, language=language)
         _write_result(audio_dst, nota_md, result)
-        notify("✓ Nota disponível", f"~/Notas/{target_dir.name}/",
-               icon="document-edit", transient=True)
+        notify("✓ Nota disponível", f"~/Notas/{target_dir.name}/", icon="document-edit", transient=True)
     except Exception as e:
         log.exception("falha transcrição async: %s", e)
         notify("⚠️ Erro transcrição", str(e)[:120], urgency="critical")
@@ -210,13 +218,18 @@ def _write_result(audio_dst: Path, nota_md: Path, result: TranscriptionResult) -
     # atualiza linha backend no frontmatter se já existir
     if "backend:" in nota:
         import re
+
         nota = re.sub(r"^backend:.*$", f"backend: {result.backend}", nota, count=1, flags=re.M)
     nota_md.write_text(nota, encoding="utf-8")
 
 
-def retranscribe(target_dir: Path, *, backend: str = "whisper",
-                 transcriber_cfg: dict[str, Any] | None = None,
-                 language: str = "pt") -> TranscriptionResult:
+def retranscribe(
+    target_dir: Path,
+    *,
+    backend: str = "whisper",
+    transcriber_cfg: dict[str, Any] | None = None,
+    language: str = "pt",
+) -> TranscriptionResult:
     """Re-transcreve uma gravação existente em ~/Notas/ com outro backend.
 
     Usado pela GUI Page Transcribe. Sobrescreve transcricao.{txt,srt} e nota.md.
@@ -236,10 +249,12 @@ def retranscribe(target_dir: Path, *, backend: str = "whisper",
     if PLACEHOLDER not in nota:
         # já tinha transcrição antiga — remove bloco ``` ``` final pra substituir
         import re
+
         nota = re.sub(
             r"## Transcrição\s*\n+```.*?```\s*$",
             f"## Transcrição\n\n{PLACEHOLDER}\n",
-            nota, flags=re.DOTALL,
+            nota,
+            flags=re.DOTALL,
         )
         nota_md.write_text(nota, encoding="utf-8")
 

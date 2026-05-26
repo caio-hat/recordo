@@ -178,9 +178,7 @@ def _run_gui(args: argparse.Namespace) -> int:
                 "~/.local/share/recordo/venv/pyvenv.cfg[/cyan]"
             )
         else:
-            console.print(
-                "Instale: sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1"
-            )
+            console.print("Instale: sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1")
         return 1
     return gui_main()
 

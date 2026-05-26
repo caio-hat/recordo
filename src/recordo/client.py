@@ -64,12 +64,16 @@ def ensure_daemon(timeout: float = 8.0, *, prefer_systemd: bool = True) -> bool:
         try:
             r = subprocess.run(
                 ["systemctl", "--user", "list-unit-files", "recordo.service"],
-                capture_output=True, text=True, timeout=3,
+                capture_output=True,
+                text=True,
+                timeout=3,
             )
             if r.returncode == 0 and "recordo.service" in r.stdout:
                 subprocess.run(
                     ["systemctl", "--user", "start", "recordo"],
-                    capture_output=True, text=True, timeout=5,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
                 )
                 started = True
         except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -83,7 +87,9 @@ def ensure_daemon(timeout: float = 8.0, *, prefer_systemd: bool = True) -> bool:
             log_fd = open(log_path, "ab")
             subprocess.Popen(
                 [sys.executable, "-m", "recordo", "--daemon"],
-                stdout=log_fd, stderr=log_fd, stdin=subprocess.DEVNULL,
+                stdout=log_fd,
+                stderr=log_fd,
+                stdin=subprocess.DEVNULL,
                 start_new_session=True,
                 close_fds=True,
             )

@@ -12,8 +12,13 @@ log = logging.getLogger(__name__)
 
 
 WHISPER_MODELS = [
-    "tiny", "base", "small", "medium",
-    "large-v3", "large-v3-turbo", "distil-large-v3",
+    "tiny",
+    "base",
+    "small",
+    "medium",
+    "large-v3",
+    "large-v3-turbo",
+    "distil-large-v3",
 ]
 LAYOUTS = ["merge", "split"]
 BACKENDS = ["whisper", "parakeet"]
@@ -155,7 +160,9 @@ class SettingsPage(Gtk.ScrolledWindow):
 
             self.cfg["transcriber"]["backend"] = BACKENDS[self.backend_row.get_selected()]
             self.cfg["transcriber"]["language"] = self.lang_row.get_text()
-            self.cfg["transcriber"]["whisper"]["model"] = WHISPER_MODELS[self.whisper_model_row.get_selected()]
+            self.cfg["transcriber"]["whisper"]["model"] = WHISPER_MODELS[
+                self.whisper_model_row.get_selected()
+            ]
             self.cfg["transcriber"]["whisper"]["device"] = DEVICES[self.whisper_device_row.get_selected()]
             self.cfg["transcriber"]["whisper"]["compute_type"] = COMPUTE_TYPES[
                 self.whisper_compute_row.get_selected()

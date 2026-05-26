@@ -75,11 +75,21 @@ DEFAULTS: dict[str, Any] = {
     "auto_detect": {
         "enabled": False,
         "apps": [
-            "teams-for-linux", "Teams", "Microsoft.Teams",
-            "zoom", "Zoom",
-            "Google Chrome", "Chromium", "chrome", "Brave",
-            "firefox", "Firefox", "Mozilla Firefox",
-            "Slack", "Discord", "discord",
+            "teams-for-linux",
+            "Teams",
+            "Microsoft.Teams",
+            "zoom",
+            "Zoom",
+            "Google Chrome",
+            "Chromium",
+            "chrome",
+            "Brave",
+            "firefox",
+            "Firefox",
+            "Mozilla Firefox",
+            "Slack",
+            "Discord",
+            "discord",
             "WebRTC VoiceEngine",
         ],
         "deny_apps": [],
@@ -205,8 +215,12 @@ def save_config(cfg: dict[str, Any]) -> None:
     )
     body = _toml_dump(cfg)
     with tempfile.NamedTemporaryFile(
-        mode="w", encoding="utf-8", dir=CONFIG_DIR, delete=False,
-        prefix=".config-", suffix=".toml.tmp",
+        mode="w",
+        encoding="utf-8",
+        dir=CONFIG_DIR,
+        delete=False,
+        prefix=".config-",
+        suffix=".toml.tmp",
     ) as tmp:
         tmp.write(header)
         tmp.write(body)

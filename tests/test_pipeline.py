@@ -44,7 +44,8 @@ def final_audio(session_state, tmp_path: Path) -> Path:
     audio.write_bytes(b"\x00" * 1024)
     # Também cria um *_report.md
     (Path(session_state.output_dir) / "20260101_120000_report.md").write_text(
-        "# Relatório", encoding="utf-8",
+        "# Relatório",
+        encoding="utf-8",
     )
     return audio
 
@@ -124,7 +125,11 @@ class TestSafeMove:
 
 class TestPostPipeline:
     def test_creates_target_dir_with_date_and_safe_subject(
-        self, session_state, final_audio, notas_dir, no_transcribe,
+        self,
+        session_state,
+        final_audio,
+        notas_dir,
+        no_transcribe,
     ):
         target = post_pipeline(session_state, final_audio, [])
         assert target is not None
@@ -134,14 +139,22 @@ class TestPostPipeline:
         assert "Test" in target.name
 
     def test_moves_audio_and_renames(
-        self, session_state, final_audio, notas_dir, no_transcribe,
+        self,
+        session_state,
+        final_audio,
+        notas_dir,
+        no_transcribe,
     ):
         target = post_pipeline(session_state, final_audio, [])
         assert (target / "audio.opus").exists()
         assert not final_audio.exists()  # foi movido
 
     def test_moves_report_md(
-        self, session_state, final_audio, notas_dir, no_transcribe,
+        self,
+        session_state,
+        final_audio,
+        notas_dir,
+        no_transcribe,
     ):
         target = post_pipeline(session_state, final_audio, [])
         reports = list(target.glob("*_report.md"))
@@ -149,7 +162,11 @@ class TestPostPipeline:
         assert "20260101_120000" in reports[0].name
 
     def test_renders_nota_md_with_frontmatter(
-        self, session_state, final_audio, notas_dir, no_transcribe,
+        self,
+        session_state,
+        final_audio,
+        notas_dir,
+        no_transcribe,
     ):
         target = post_pipeline(session_state, final_audio, [])
         nota = (target / "nota.md").read_text(encoding="utf-8")
@@ -159,7 +176,11 @@ class TestPostPipeline:
         assert "_(processando" in nota  # placeholder
 
     def test_renders_marks_in_nota_md(
-        self, session_state, final_audio, notas_dir, no_transcribe,
+        self,
+        session_state,
+        final_audio,
+        notas_dir,
+        no_transcribe,
     ):
         marks = [
             Mark(ts_seconds=125.5, iso_time="2026-01-01T12:02:05", text="decisão X"),
@@ -171,14 +192,21 @@ class TestPostPipeline:
         assert "(marca)" in nota  # marca sem texto
 
     def test_returns_none_when_audio_missing(
-        self, session_state, notas_dir, no_transcribe,
+        self,
+        session_state,
+        notas_dir,
+        no_transcribe,
     ):
         missing = Path("/tmp/recordo-test-does-not-exist.opus")
         target = post_pipeline(session_state, missing, [])
         assert target is None
 
     def test_uses_custom_config_backend(
-        self, session_state, final_audio, notas_dir, no_transcribe,
+        self,
+        session_state,
+        final_audio,
+        notas_dir,
+        no_transcribe,
     ):
         cfg = {
             "transcriber": {
@@ -192,7 +220,11 @@ class TestPostPipeline:
         assert "backend: parakeet" in nota
 
     def test_spawns_transcribe_thread(
-        self, session_state, final_audio, notas_dir, monkeypatch,
+        self,
+        session_state,
+        final_audio,
+        notas_dir,
+        monkeypatch,
     ):
         """Confirma que post_pipeline dispara thread de transcrição."""
         called: list[tuple] = []

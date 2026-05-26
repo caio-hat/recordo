@@ -85,8 +85,11 @@ def test_concat_reencode_when_requested(tmp_path: Path):
     segs = [tmp_path / "a.opus"]
     segs[0].write_bytes(b"x")
     cmd = build_concat_cmd(
-        segs, tmp_path / "list.txt", tmp_path / "final.opus",
-        bitrate="48k", reencode=True,
+        segs,
+        tmp_path / "list.txt",
+        tmp_path / "final.opus",
+        bitrate="48k",
+        reencode=True,
     )
     assert "libopus" in cmd
     assert "48k" in cmd

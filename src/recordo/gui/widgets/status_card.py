@@ -9,8 +9,7 @@ class StatusCard(Adw.Bin):
     def __init__(self):
         super().__init__()
 
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24,
-                        margin_top=48, margin_bottom=48)
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=24, margin_top=48, margin_bottom=48)
         outer.set_halign(Gtk.Align.CENTER)
         outer.set_valign(Gtk.Align.CENTER)
         self.set_child(outer)
@@ -46,9 +45,7 @@ class StatusCard(Adw.Bin):
             segs = status.get("segments", 0)
             marks = status.get("marks", 0)
             auto = " · auto-detect" if status.get("auto_started") else ""
-            self.info.set_markup(
-                f'<span color="#888">segmentos: {segs} · marcas: {marks}{auto}</span>'
-            )
+            self.info.set_markup(f'<span color="#888">segmentos: {segs} · marcas: {marks}{auto}</span>')
         else:
             self.indicator.set_markup('<span size="96000">⚫</span>')
             self.title.set_markup('<span size="x-large" weight="bold">Idle</span>')

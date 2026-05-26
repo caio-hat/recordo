@@ -54,14 +54,20 @@ class RecordoWindow(Adw.ApplicationWindow):
         scrolled.set_child(self.listbox)
 
         for icon, label, tag in [
-            ("media-record-symbolic", "Status",       "status"),
+            ("media-record-symbolic", "Status", "status"),
             ("media-playback-start-symbolic", "Controle", "control"),
             ("emblem-system-symbolic", "Configurações", "settings"),
-            ("document-edit-symbolic", "Transcrever",   "transcribe"),
+            ("document-edit-symbolic", "Transcrever", "transcribe"),
         ]:
             row = Gtk.ListBoxRow()
-            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8,
-                              margin_start=12, margin_end=12, margin_top=8, margin_bottom=8)
+            row_box = Gtk.Box(
+                orientation=Gtk.Orientation.HORIZONTAL,
+                spacing=8,
+                margin_start=12,
+                margin_end=12,
+                margin_top=8,
+                margin_bottom=8,
+            )
             row_box.append(Gtk.Image.new_from_icon_name(icon))
             row_box.append(Gtk.Label(label=label, xalign=0, hexpand=True))
             row.set_child(row_box)
@@ -139,7 +145,8 @@ class RecordoApp(Adw.Application):
         if not self.window:
             return
         about = Adw.AboutWindow(
-            transient_for=self.window, modal=True,
+            transient_for=self.window,
+            modal=True,
             application_name="Recordo",
             application_icon="recordo",
             developer_name="Caio Hat",
@@ -156,9 +163,7 @@ class RecordoApp(Adw.Application):
 
         def on_resp(resp: dict) -> None:
             if self.window:
-                self.window.toast(
-                    f"Daemon: {resp.get('shutting_down') or resp.get('error', '?')}"
-                )
+                self.window.toast(f"Daemon: {resp.get('shutting_down') or resp.get('error', '?')}")
 
         call_async("quit", on_resp)
 

@@ -166,10 +166,14 @@ def _measure_mic_db_parec(source: str, sample_seconds: int) -> float | None:
     channels = 1
     cmd = [
         "parec",
-        "--device", source,
-        "--rate", str(rate),
-        "--channels", str(channels),
-        "--format", "s16le",
+        "--device",
+        source,
+        "--rate",
+        str(rate),
+        "--channels",
+        str(channels),
+        "--format",
+        "s16le",
         "--raw",
     ]
     expected_bytes = rate * channels * 2 * sample_seconds
@@ -180,6 +184,7 @@ def _measure_mic_db_parec(source: str, sample_seconds: int) -> float | None:
             data = b""
             deadline = sample_seconds + 1.0
             import time as _time
+
             start = _time.monotonic()
             while len(data) < expected_bytes and (_time.monotonic() - start) < deadline:
                 chunk = proc.stdout.read(min(4096, expected_bytes - len(data)))  # type: ignore[union-attr]

@@ -35,9 +35,7 @@ def test_load_config_creates_default(tmp_path, monkeypatch):
     cfg_path = tmp_path / "config.toml"
     monkeypatch.setattr(config, "CONFIG_TOML", cfg_path)
     monkeypatch.setattr(config, "CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(
-        config, "LEGACY_AUTO_DETECT_JSON", tmp_path / "auto-detect.json"
-    )
+    monkeypatch.setattr(config, "LEGACY_AUTO_DETECT_JSON", tmp_path / "auto-detect.json")
 
     cfg = config.load_config()
     assert cfg["recording"]["bitrate"] == "32k"
@@ -52,18 +50,11 @@ def test_load_config_merges_user_overrides(tmp_path, monkeypatch):
     """Overrides parciais preservam defaults nas chaves não tocadas."""
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text(
-        '[recording]\n'
-        'bitrate = "48k"\n'
-        '\n'
-        '[auto_detect]\n'
-        'enabled = true\n'
-        'apps = ["only-app"]\n'
+        '[recording]\nbitrate = "48k"\n\n[auto_detect]\nenabled = true\napps = ["only-app"]\n'
     )
     monkeypatch.setattr(config, "CONFIG_TOML", cfg_path)
     monkeypatch.setattr(config, "CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(
-        config, "LEGACY_AUTO_DETECT_JSON", tmp_path / "auto-detect.json"
-    )
+    monkeypatch.setattr(config, "LEGACY_AUTO_DETECT_JSON", tmp_path / "auto-detect.json")
 
     cfg = config.load_config()
     assert cfg["recording"]["bitrate"] == "48k"
@@ -101,9 +92,7 @@ def test_load_auto_detect_config_proxies_to_load_config(tmp_path, monkeypatch):
     cfg_path = tmp_path / "config.toml"
     monkeypatch.setattr(config, "CONFIG_TOML", cfg_path)
     monkeypatch.setattr(config, "CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(
-        config, "LEGACY_AUTO_DETECT_JSON", tmp_path / "auto-detect.json"
-    )
+    monkeypatch.setattr(config, "LEGACY_AUTO_DETECT_JSON", tmp_path / "auto-detect.json")
 
     ad = config.load_auto_detect_config()
     assert "enabled" in ad
