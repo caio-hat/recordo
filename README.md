@@ -26,12 +26,14 @@ Bonus: pós-gravação é 100% automático. Áudio Opus, transcrição via faste
 
 - 🔴 **Toggle global** `Super+R` — start/stop sem terminal
 - 📍 **Marcar momento** `Super+Shift+M` — registra timestamp + nota opcional
+- 🎛️ **TUI moderna** (`recordo --tui`) — painéis live com Textual + auto-conecta no daemon
+- 🖼️ **GUI desktop** (`recordo --gui`) — GTK4 + libadwaita, sidebar com Status / Controle / Settings / Transcrever
 - 🎙️ **Auto-detecção de fontes** — Bluetooth > USB > builtin, mic + system loopback
-- 🎚️ **Auto-detect call** (opt-in) — detecta Teams/Meet/Zoom/Slack/Discord usando mic, grava sozinho
-- 🤖 **Auto-subject** — pega título da janela ativa (Teams/Meet/Zoom/Slack/Discord)
-- 💾 **Codec Opus 32 kbps** — 10× menos CPU que MP3, ~6× menor em disco
-- 🔇 **Watchdog inteligente** — para sozinho após 10min de mic mudo, cap absoluto 4h
-- 📝 **Transcrição automática** via faster-whisper (pt-BR local, sem cloud)
+- 🎚️ **Auto-detect call** (opt-in) — event-driven via `pactl subscribe`, detecta Teams/Meet/Zoom/Slack/Discord usando mic e grava sozinho
+- 🤖 **Auto-subject** — pega título da janela ativa (X11 ou Wayland: sway/i3/hyprland)
+- 💾 **Codec Opus 32 kbps** — 10× menos CPU que MP3, ~6× menor em disco; concat com `-c copy` (zero reencode quando layout é homogêneo)
+- 🔇 **Watchdog inteligente** — `parec` mede mic em paralelo (não disputa com captura); para sozinho após 10min mudo, cap absoluto 4h
+- 📝 **Transcrição automática** via faster-whisper (pt-BR local, sem cloud) — backend pluggable (Whisper ou Parakeet via NeMo)
 - 🗂️ **Pós-pipeline** — move pra `~/Notas/<data>_<assunto>/` com `nota.md` + frontmatter YAML
 - 🚀 **Daemon systemd** — sempre vivo, latência ~zero no toggle
 - 🧠 **Integração Vicinae** — 4 comandos (toggle/status/last/mark)
@@ -56,7 +58,7 @@ Após instalar, **logout/login** ou `cinnamon --replace &` pra Cinnamon recarreg
 - Cinnamon (opcional — keybindings; outros DEs funcionam sem hotkey)
 - Vicinae (opcional — integração launcher)
 
-Setup auto-instala via apt: `ffmpeg`, `pulseaudio-utils`, `libnotify-bin`, `xdotool`, `zenity`, `dconf-cli`, `wmctrl`, `socat`, `jq`, `xdg-utils`, `python3-venv`.
+Setup auto-instala via apt: `ffmpeg`, `pulseaudio-utils` (inclui `parec` usado pelo watchdog de silêncio), `libnotify-bin`, `xdotool`, `zenity`, `dconf-cli`, `wmctrl`, `socat`, `jq`, `xdg-utils`, `python3-venv`. Para a GUI GTK4: `python3-gi`, `gir1.2-gtk-4.0`, `gir1.2-adw-1`. Em Wayland (sway/i3/hyprland), também detecta `swaymsg`/`hyprctl` para captura de janela ativa.
 
 ## Uso
 
@@ -65,8 +67,13 @@ Setup auto-instala via apt: `ffmpeg`, `pulseaudio-utils`, `libnotify-bin`, `xdot
 | Iniciar/parar gravação | `Super+R` (ou `recordo --toggle`) |
 | Marcar momento | `Super+Shift+M` (ou `recordo --mark "nota"`) |
 | Status atual | `recordo --status` |
+| TUI moderna (Textual) | `recordo --tui` — auto-conecta no daemon |
+| GUI desktop (GTK4) | `recordo --gui` — sidebar + páginas |
 | Listar dispositivos | `recordo --list-devices` |
-| Modo CLI standalone (Rich TUI) | `recordo -a` |
+| Recarregar config | `recordo --reload-config` (sem restart do daemon) |
+| Modo CLI standalone (legacy) | `recordo -a` (Rich TUI sem daemon, deprecated) |
+
+A TUI Textual é a forma recomendada de interagir pelo terminal: painéis live de status, dispositivos detectados e últimas gravações; help completo via `?`. Atalhos: `r` toggle, `m` marcar, `s` parar, `R` reload config, `q` sair.
 
 Logs em `/tmp/recordo.log`. Resultado em `~/Notas/<YYYY-MM-DD>_<assunto>/`.
 
@@ -106,16 +113,22 @@ tags: [reuniao]
 
 ## Auto-detect (opt-in)
 
-Ligar:
+Ligar via TUI/GUI (Settings) ou direto no `~/.config/recordo/config.toml`:
 
-```bash
-jq '.enabled = true' ~/.config/recordo/auto-detect.json | sponge ~/.config/recordo/auto-detect.json
-systemctl --user restart recordo
+```toml
+[auto_detect]
+enabled = true
 ```
 
-Daemon vai monitorar mic. Quando detectar Teams/Zoom/Meet/Slack capturando áudio por ≥8s, inicia gravação sozinho. Quiet period de 5min pós-stop evita re-trigger indesejado.
+Aplicar sem restart:
 
-Editar lista de apps permitidos: `~/.config/recordo/auto-detect.json`.
+```bash
+recordo --reload-config
+```
+
+Daemon vai monitorar mic via `pactl subscribe` (event-driven, baixa latência). Quando detectar Teams/Zoom/Meet/Slack capturando áudio por ≥8s, inicia gravação sozinho. Quiet period de 5min pós-stop evita re-trigger indesejado.
+
+A lista de apps permitidos vive em `[auto_detect].apps` no `config.toml`. Veja `config/config.toml.example`.
 
 ## Troubleshooting
 

@@ -81,11 +81,17 @@ if command -v dconf >/dev/null; then
 fi
 
 sec "Config"
-if [[ -f "$HOME/.config/recordo/auto-detect.json" ]]; then
+if [[ -f "$HOME/.config/recordo/config.toml" ]]; then
+    # Extrai linha "enabled = true/false" da seção [auto_detect]
+    ENA=$(awk '/^\[auto_detect\]/{flag=1;next}/^\[/{flag=0}flag&&/^enabled/{print $3;exit}' \
+          "$HOME/.config/recordo/config.toml" 2>/dev/null)
+    ok "config.toml (auto_detect.enabled=${ENA:-?})"
+elif [[ -f "$HOME/.config/recordo/auto-detect.json" ]]; then
+    # Legacy — será migrado no próximo load_config()
     ENA=$(jq -r '.enabled' "$HOME/.config/recordo/auto-detect.json" 2>/dev/null)
-    ok "auto-detect.json (enabled=$ENA)"
+    warn "auto-detect.json (legacy, será migrado para config.toml). enabled=$ENA"
 else
-    warn "$HOME/.config/recordo/auto-detect.json ausente"
+    warn "$HOME/.config/recordo/config.toml ausente (será criado no 1º --daemon)"
 fi
 
 sec "Notas dir"
