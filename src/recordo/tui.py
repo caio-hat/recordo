@@ -1,4 +1,10 @@
-"""TUI Rich Live + KeyReader pra modo standalone CLI (sem daemon)."""
+"""TUI Rich Live + KeyReader pra modo standalone CLI (sem daemon).
+
+⚠ Deprecated em v0.2: use `recordo --tui` (Textual, conectada ao daemon).
+Esta TUI é mantida para o modo standalone (`recordo -a -s "..."`) que opera
+sem daemon. Em versão futura, o standalone será unificado via daemon ephemeral
+e este módulo será removido.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +13,7 @@ import sys
 import termios
 import time
 import tty
+import warnings
 from datetime import datetime
 
 from rich.console import Console, Group
@@ -16,6 +23,21 @@ from rich.table import Table
 from rich.text import Text
 
 from .recorder import Recorder
+
+_DEPRECATION_WARNED = False
+
+
+def _warn_once() -> None:
+    global _DEPRECATION_WARNED
+    if _DEPRECATION_WARNED:
+        return
+    _DEPRECATION_WARNED = True
+    warnings.warn(
+        "tui.py (Rich TUI standalone) está deprecada — use `recordo --tui` "
+        "(Textual, conectada ao daemon). Este módulo será removido em v0.3.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
 
 
 class KeyReader:
@@ -83,6 +105,7 @@ def render_view(rec: Recorder, status: str, total: float) -> Panel:
 
 
 def run_tui(rec: Recorder) -> None:
+    _warn_once()
     total = sum(s.duration for s in rec.state.segments)
     status = "Aguardando comando."
     console = Console()
@@ -130,6 +153,7 @@ def run_tui(rec: Recorder) -> None:
 
 def run_plain(rec: Recorder) -> None:
     """Modo sem TUI — comandos via stdin linha-a-linha."""
+    _warn_once()
     print("Comandos: r=iniciar  p=pausar  q=encerrar  (ENTER após cada)")
     while True:
         try:
