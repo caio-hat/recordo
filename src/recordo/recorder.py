@@ -194,7 +194,13 @@ class Recorder:
         return None
 
     def finalize(self) -> Path | None:
-        """Encerra gravação e concatena segmentos válidos."""
+        """Encerra gravação e concatena segmentos válidos.
+
+        Inclui sanity check pós-concat: se a duração do arquivo final for
+        muito menor que a soma dos segmentos (caso comum: bug do concat
+        demuxer com timestamps PTS reset entre segmentos opus), tenta
+        reencode como fallback.
+        """
         if self.recording:
             self.stop_segment()
         merged = [
@@ -214,24 +220,80 @@ class Recorder:
         layouts = {s.layout for s in valid_segs}
         bitrates = {s.bitrate for s in valid_segs}
         heterogeneous = len(layouts) > 1 or len(bitrates) > 1
+        expected_duration = sum(s.duration for s in valid_segs)
+
         if heterogeneous:
             log.info(
                 "concat com reencode (segmentos heterogêneos: layouts=%s bitrates=%s)", layouts, bitrates
             )
+
+        if not self._run_concat(merged, list_file, final, reencode=heterogeneous):
+            return None
+
+        # Sanity check: se duração final < 50% do esperado, retry com reencode.
+        # Caso conhecido: bug do `-c copy` com Opus quando há reset de PTS
+        # entre segmentos — ffmpeg pode truncar silenciosamente.
+        if not heterogeneous and expected_duration > 5:
+            actual = self._probe_duration(final)
+            if actual is not None and actual < expected_duration * 0.5:
+                log.warning(
+                    "concat -c copy produziu áudio truncado (%.1fs vs esperado %.1fs) — retry com reencode",
+                    actual,
+                    expected_duration,
+                )
+                if not self._run_concat(merged, list_file, final, reencode=True):
+                    return None
+                # confirma duração novamente
+                actual2 = self._probe_duration(final)
+                if actual2 is not None and actual2 < expected_duration * 0.5:
+                    log.error(
+                        "concat reencode ainda truncado (%.1fs vs %.1fs) — gravação pode estar corrompida",
+                        actual2,
+                        expected_duration,
+                    )
+
+        self.state.finished = True
+        self.state.save()
+        return final
+
+    def _run_concat(self, merged: list[Path], list_file: Path, final: Path, *, reencode: bool) -> bool:
+        """Executa subprocess do concat. Retorna True/False."""
         cmd = build_concat_cmd(
             merged,
             list_file,
             final,
             bitrate=self.state.bitrate,
-            reencode=heterogeneous,
+            reencode=reencode,
         )
         try:
             subprocess.run(cmd, check=True, capture_output=True, text=True)
-            self.state.finished = True
-            self.state.save()
-            return final
+            return True
         except subprocess.CalledProcessError as e:
-            log.error("erro no concat final: %s", e.stderr)
+            log.error("erro no concat final (reencode=%s): %s", reencode, e.stderr)
+            return False
+
+    @staticmethod
+    def _probe_duration(path: Path) -> float | None:
+        """ffprobe -> duração em segundos, ou None se falhar."""
+        try:
+            r = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "default=nw=1:nk=1",
+                    str(path),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=True,
+            )
+            return float(r.stdout.strip())
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, FileNotFoundError):
             return None
 
 
