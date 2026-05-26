@@ -142,6 +142,7 @@ class TranscribePage(Gtk.Box):
                     backend=backend,
                     transcriber_cfg=transcriber_cfg,
                     language=self.cfg["transcriber"]["language"],
+                    summarizer_cfg=self.cfg.get("summarizer"),
                 )
                 GLib.idle_add(self._on_done, result, None, pulse_id)
             except Exception as e:

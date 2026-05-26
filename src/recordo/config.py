@@ -72,6 +72,20 @@ DEFAULTS: dict[str, Any] = {
             "use_onnx": False,
         },
     },
+    "summarizer": {
+        "backend": "ollama",  # ollama | heuristic | none
+        "ollama": {
+            "model": "gemma2:2b",
+            "host": "http://localhost:11434",
+            "timeout_seconds": 120,
+            "max_transcript_chars": 30000,
+        },
+        "heuristic": {
+            "top_n_sentences": 5,
+            "max_action_items": 8,
+        },
+        "fallback_to_heuristic": True,  # se ollama indisponível, usa heuristic
+    },
     "auto_detect": {
         "enabled": False,
         "apps": [

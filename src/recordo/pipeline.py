@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import subprocess
 import sys
@@ -21,6 +22,13 @@ log = logging.getLogger(__name__)
 
 WHISPER_PKGS = ["faster-whisper>=1.0"]
 PLACEHOLDER = "_(processando — esta seção é preenchida quando o backend terminar)_"
+SUMMARY_PLACEHOLDER = "_(resumo será gerado após a transcrição)_"
+
+# Status dict global indexado por target_dir.name. Usado por callers (rerun)
+# pra inspecionar erros assíncronos da thread de transcrição. Não é
+# thread-safe contra múltiplas sessões com mesmo nome — improvável dado
+# o naming "<YYYY-MM-DD>_<safe_subject>".
+_PIPELINE_STATUS: dict[str, dict[str, Any]] = {}
 
 
 def _safe_move(src: Path, dst: Path) -> None:
@@ -114,6 +122,10 @@ tags: [reuniao]
 
 # {state.subject}
 
+## Resumo
+
+{SUMMARY_PLACEHOLDER}
+
 ## Marcas durante gravação
 
 {marks_block}
@@ -170,13 +182,36 @@ def post_pipeline(
     nota_md = target_dir / "nota.md"
     _render_nota_md(state, marks, target_dir, backend_name=backend)
 
+    summarizer_cfg = cfg.get("summarizer")
+    # Status dict partilhado pra que callers (ex: rerun-pipeline) possam
+    # detectar erros assíncronos via join + check.
+    pipeline_status: dict[str, Any] = {}
+    _PIPELINE_STATUS[target_dir.name] = pipeline_status
+
     threading.Thread(
         target=_transcribe_async,
         args=(audio_dst, nota_md, backend, transcriber_cfg, lang, target_dir),
+        kwargs={
+            "summarizer_cfg": summarizer_cfg,
+            "subject": state.subject,
+            "status": pipeline_status,
+        },
         daemon=False,
         name="recordo-transcribe",
     ).start()
     return target_dir
+
+
+def get_pipeline_status(target_dir: Path) -> dict[str, Any]:
+    """Lê o status atual do pipeline de uma sessão pós-pipeline.
+
+    Status keys:
+      'ok' (bool): True se transcrição+resumo concluíram sem erro
+      'transcriber' (str): backend usado (após fallback automático)
+      'summary_backend' (str): summarizer usado (após fallback)
+      'error' (str): mensagem se algo falhou
+    """
+    return _PIPELINE_STATUS.get(target_dir.name, {})
 
 
 def _transcribe_async(
@@ -186,9 +221,40 @@ def _transcribe_async(
     transcriber_cfg: dict[str, Any],
     language: str,
     target_dir: Path,
+    summarizer_cfg: dict[str, Any] | None = None,
+    subject: str = "",
+    status: dict[str, Any] | None = None,
 ) -> None:
+    """Worker da thread de transcrição.
+
+    `status` é um dict opcional partilhado com o caller; preenchemos
+    'ok', 'transcriber', 'summary_backend', 'error' pra que o caller
+    (rerun-pipeline) possa propagar erros via exit code.
+    """
+    if status is None:
+        status = {}
     try:
+        # Backend parakeet precisa de nemo — se ausente, fallback automático whisper
+        if backend == "parakeet":
+            try:
+                import nemo.collections.asr  # noqa: F401
+            except ImportError:
+                log.warning(
+                    "parakeet config'd mas nemo não instalado — "
+                    "fallback automático para whisper "
+                    "(instale com setup.sh --with-parakeet)"
+                )
+                notify(
+                    "⚠ Parakeet indisponível",
+                    "Usando Whisper como fallback. Para Parakeet: setup.sh --with-parakeet",
+                    urgency="normal",
+                )
+                backend = "whisper"
+                transcriber_cfg.setdefault("whisper", {})
+
+        # Backend whisper precisa de faster-whisper instalado
         if backend == "whisper" and not ensure_whisper_installed():
+            status["error"] = "faster-whisper indisponível"
             notify(
                 "⚠️ Transcrição indisponível",
                 "faster-whisper não instalado. Áudio em ~/Notas/.",
@@ -199,10 +265,71 @@ def _transcribe_async(
         transcriber = get_transcriber(backend, transcriber_cfg)
         result = transcriber.transcribe(audio_dst, language=language)
         _write_result(audio_dst, nota_md, result)
-        notify("✓ Nota disponível", f"~/Notas/{target_dir.name}/", icon="document-edit", transient=True)
+        status["transcriber"] = result.backend
+        notify(
+            "✓ Transcrição pronta",
+            f"~/Notas/{target_dir.name}/ — gerando resumo…",
+            icon="document-edit",
+            transient=True,
+        )
+
+        # Gera resumo (não bloqueia transcrição) com fallback Ollama → heuristic
+        if summarizer_cfg is not None:
+            summary = _generate_summary(
+                result.text,
+                subject=subject,
+                summarizer_cfg=summarizer_cfg,
+                language=language,
+            )
+            _embed_summary(nota_md, summary)
+            _write_summary_md(target_dir, summary)
+            status["summary_backend"] = summary.backend
+            notify(
+                "✓ Nota completa",
+                f"~/Notas/{target_dir.name}/",
+                icon="document-edit",
+                transient=True,
+            )
+        status["ok"] = True
     except Exception as e:
-        log.exception("falha transcrição async: %s", e)
-        notify("⚠️ Erro transcrição", str(e)[:120], urgency="critical")
+        log.exception("falha transcrição/resumo async: %s", e)
+        status["error"] = str(e)[:200]
+        notify("⚠️ Erro pipeline", str(e)[:120], urgency="critical")
+
+
+def _generate_summary(
+    transcript_text: str,
+    *,
+    subject: str,
+    summarizer_cfg: dict[str, Any],
+    language: str = "pt",
+) -> SummaryResult:  # noqa: F821 - imported lazily
+    """Gera resumo respeitando fallback Ollama → heuristic.
+
+    summarizer_cfg ['backend'] = 'ollama' | 'heuristic' | 'none'
+    Se 'ollama' falhar e fallback_to_heuristic=True, tenta heuristic.
+    """
+    from .summarizer import get_summarizer
+
+    backend_name = summarizer_cfg.get("backend", "ollama")
+    if backend_name == "none":
+        from .summarizer.base import NoOpSummarizer
+
+        return NoOpSummarizer().summarize(transcript_text, language=language, subject=subject)
+
+    primary = get_summarizer(backend_name, summarizer_cfg)
+    log.info("gerando resumo com %s", primary.name)
+    result = primary.summarize(transcript_text, language=language, subject=subject)
+
+    if result.error and backend_name == "ollama" and summarizer_cfg.get("fallback_to_heuristic", True):
+        log.warning("ollama falhou (%s) — fallback heuristic", result.error)
+        fallback = get_summarizer("heuristic", summarizer_cfg)
+        result = fallback.summarize(transcript_text, language=language, subject=subject)
+        if not result.error:
+            # Marca origem do fallback no backend
+            result.backend = f"{result.backend} (fallback de {primary.name})"
+
+    return result
 
 
 def _write_result(audio_dst: Path, nota_md: Path, result: TranscriptionResult) -> None:
@@ -217,10 +344,70 @@ def _write_result(audio_dst: Path, nota_md: Path, result: TranscriptionResult) -
     nota = nota.replace(PLACEHOLDER, f"```\n{embedded}\n```")
     # atualiza linha backend no frontmatter se já existir
     if "backend:" in nota:
-        import re
-
         nota = re.sub(r"^backend:.*$", f"backend: {result.backend}", nota, count=1, flags=re.M)
     nota_md.write_text(nota, encoding="utf-8")
+
+
+def _embed_summary(nota_md: Path, summary: Any) -> None:
+    """Substitui SUMMARY_PLACEHOLDER em nota.md pelo bloco markdown do resumo.
+
+    Atualiza também a linha `summarizer:` no frontmatter (adiciona se ausente).
+    """
+    nota = nota_md.read_text(encoding="utf-8")
+    md_block = summary.to_markdown()
+
+    if SUMMARY_PLACEHOLDER in nota:
+        nota = nota.replace(SUMMARY_PLACEHOLDER, md_block.rstrip())
+    else:
+        # Nota sem placeholder (re-rodada): substitui bloco "## Resumo" existente
+        # até a próxima `## ` (Marcas) ou fim
+        if re.search(r"^## Resumo\b", nota, flags=re.M):
+            nota = re.sub(
+                r"## Resumo\s*\n+(?:.*?\n)*?(?=## |\Z)",
+                f"## Resumo\n\n{md_block.rstrip()}\n\n",
+                nota,
+                count=1,
+                flags=re.DOTALL | re.M,
+            )
+        else:
+            # Nota sem seção Resumo (formato antigo): insere antes de `## Marcas`
+            nota = re.sub(
+                r"^(## Marcas)",
+                f"## Resumo\n\n{md_block.rstrip()}\n\n\\1",
+                nota,
+                count=1,
+                flags=re.M,
+            )
+
+    # Frontmatter: atualiza/adiciona summarizer:
+    if re.search(r"^summarizer:.*$", nota, flags=re.M):
+        nota = re.sub(
+            r"^summarizer:.*$",
+            f"summarizer: {summary.backend or 'none'}",
+            nota,
+            count=1,
+            flags=re.M,
+        )
+    elif "backend:" in nota:
+        nota = re.sub(
+            r"^(backend:.*)$",
+            f"\\1\nsummarizer: {summary.backend or 'none'}",
+            nota,
+            count=1,
+            flags=re.M,
+        )
+
+    nota_md.write_text(nota, encoding="utf-8")
+
+
+def _write_summary_md(target_dir: Path, summary: Any) -> None:
+    """Salva resumo.md standalone (útil pra grep/scripts externos)."""
+    if summary.is_empty and not summary.error:
+        return
+    (target_dir / "resumo.md").write_text(
+        f"# Resumo — {target_dir.name}\n\n{summary.to_markdown()}",
+        encoding="utf-8",
+    )
 
 
 def retranscribe(
@@ -229,10 +416,13 @@ def retranscribe(
     backend: str = "whisper",
     transcriber_cfg: dict[str, Any] | None = None,
     language: str = "pt",
+    summarizer_cfg: dict[str, Any] | None = None,
+    subject: str | None = None,
 ) -> TranscriptionResult:
     """Re-transcreve uma gravação existente em ~/Notas/ com outro backend.
 
     Usado pela GUI Page Transcribe. Sobrescreve transcricao.{txt,srt} e nota.md.
+    Se summarizer_cfg fornecido, regenera o resumo também.
     """
     audio = target_dir / "audio.opus"
     if not audio.exists():
@@ -248,8 +438,6 @@ def retranscribe(
     nota = nota_md.read_text(encoding="utf-8")
     if PLACEHOLDER not in nota:
         # já tinha transcrição antiga — remove bloco ``` ``` final pra substituir
-        import re
-
         nota = re.sub(
             r"## Transcrição\s*\n+```.*?```\s*$",
             f"## Transcrição\n\n{PLACEHOLDER}\n",
@@ -259,5 +447,149 @@ def retranscribe(
         nota_md.write_text(nota, encoding="utf-8")
 
     _write_result(audio, nota_md, result)
+
+    # Resumo opcional
+    if summarizer_cfg is not None:
+        # Subject vem do parâmetro ou do nome do diretório (formato YYYY-MM-DD_<safe>)
+        if subject is None:
+            name = target_dir.name
+            # remove prefix "YYYY-MM-DD_"
+            subject = re.sub(r"^\d{4}-\d{2}-\d{2}_", "", name).replace("_", " ")
+        summary = _generate_summary(
+            result.text,
+            subject=subject,
+            summarizer_cfg=summarizer_cfg,
+            language=language,
+        )
+        _embed_summary(nota_md, summary)
+        _write_summary_md(target_dir, summary)
+
     log.info("re-transcrição completa: %s (%s)", target_dir.name, result.backend)
     return result
+
+
+def rerun_pipeline_for_session(
+    session_dir: Path,
+    *,
+    wait_for_transcribe: bool = True,
+    config: dict[str, Any] | None = None,
+) -> Path | None:
+    """Recovery: re-roda post_pipeline numa sessão em ~/recordings/.
+
+    Útil quando o concat final ficou truncado (caso comum: -c copy com
+    Opus + reset de PTS) ou quando o post_pipeline morreu silenciosamente
+    e ~/Notas/<data>_<assunto>/ não foi criado.
+
+    Operação:
+      1. Carrega SessionState do session.json
+      2. Regenera o concat final via _concat_list.txt + ffmpeg -c copy.
+         Faz sanity check duração; se truncado, retry com reencode libopus.
+      3. Chama post_pipeline normalmente.
+      4. Se wait_for_transcribe=True, faz join na thread de transcrição.
+
+    Retorna o target_dir em ~/Notas/ ou None se falhou.
+    """
+    from .recorder import SessionState  # tardio pra evitar ciclo
+
+    state = SessionState.load(session_dir)
+    valid_segs = [s for s in state.segments if s.status == "merged"]
+    if not valid_segs:
+        log.error("rerun: nenhum segmento merged em %s", session_dir)
+        return None
+
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", state.subject).strip("_") or "Gravacao"
+    final = session_dir / f"{safe}_{state.session_id}.opus"
+    list_file = session_dir / "_concat_list.txt"
+
+    # Regenera _concat_list.txt + final com -c copy primeiro
+    list_file.write_text("".join(f"file '{Path(s.merged_file).as_posix()}'\n" for s in valid_segs))
+    expected_dur = sum(s.duration for s in valid_segs)
+    if not _ffmpeg_concat(list_file, final, reencode=False):
+        return None
+
+    # Sanity check
+    actual = _ffprobe_duration(final)
+    if actual is not None and actual < expected_dur * 0.5:
+        log.warning(
+            "rerun: concat -c copy truncou (%.1fs/%.1fs) — retry reencode",
+            actual,
+            expected_dur,
+        )
+        if not _ffmpeg_concat(list_file, final, reencode=True, bitrate=state.bitrate):
+            return None
+        actual = _ffprobe_duration(final)
+
+    log.info("rerun: concat OK (%.1fs)", actual or 0)
+
+    # Agora chama post_pipeline com a sessão recuperada
+    target = post_pipeline(state, final, state.marks, config=config)
+    if target is None:
+        return None
+
+    if wait_for_transcribe:
+        # Join na thread "recordo-transcribe" pra esperar a transcrição
+        for t in threading.enumerate():
+            if t.name == "recordo-transcribe" and t.is_alive():
+                log.info("rerun: aguardando transcrição (thread %s)", t.name)
+                t.join()
+                break
+
+        # Checa status — propaga erro mesmo que o concat tenha funcionado
+        status = get_pipeline_status(target)
+        if status.get("error"):
+            log.error("rerun: pipeline com erro: %s", status["error"])
+            return None
+        if not status.get("ok"):
+            log.warning("rerun: pipeline finalizou sem flag ok (status=%s)", status)
+
+    return target
+
+
+def _ffmpeg_concat(list_file: Path, output: Path, *, reencode: bool, bitrate: str = "32k") -> bool:
+    """Helper: roda ffmpeg concat. Retorna True/False."""
+    base = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "warning",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        str(list_file),
+    ]
+    if reencode:
+        cmd = [*base, "-c:a", "libopus", "-b:a", bitrate, "-application", "voip", "-y", str(output)]
+    else:
+        cmd = [*base, "-c", "copy", "-y", str(output)]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        return True
+    except subprocess.CalledProcessError as e:
+        log.error("ffmpeg concat falhou (reencode=%s): %s", reencode, e.stderr)
+        return False
+
+
+def _ffprobe_duration(path: Path) -> float | None:
+    """Helper: ffprobe duração em segundos."""
+    try:
+        r = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=nw=1:nk=1",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        return float(r.stdout.strip())
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, FileNotFoundError):
+        return None

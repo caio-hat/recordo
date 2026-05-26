@@ -130,6 +130,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Abre a TUI Textual moderna (auto-conecta no daemon, sobe se preciso)",
     )
+    g.add_argument(
+        "--rerun-pipeline",
+        metavar="SESSION_DIR",
+        help="Re-roda post_pipeline em sessão antiga em ~/recordings/ (recovery). "
+        "Útil quando concat truncou ou pipeline morreu silenciosamente.",
+    )
     return p
 
 
@@ -282,9 +288,53 @@ def main() -> int:
         from .tui_textual import run_textual_tui
 
         return run_textual_tui()
+    if args.rerun_pipeline:
+        return _run_rerun_pipeline(args.rerun_pipeline)
     if args.daemon:
         return _run_daemon(args)
     return _run_standalone(args)
+
+
+def _run_rerun_pipeline(session_dir: str) -> int:
+    """Recovery: re-roda post_pipeline em sessão antiga.
+
+    Útil quando:
+      - O concat final ficou truncado (regenera via -c copy)
+      - O post_pipeline morreu silenciosamente (não criou ~/Notas/...)
+      - User quer reprocessar sessão com novo backend de transcrição
+
+    Operação:
+      1. Lê session.json
+      2. Regenera o concat final via _concat_list.txt (idempotente)
+      3. Chama post_pipeline com a SessionState e o áudio final
+      4. Bloqueia até a thread de transcrição terminar
+    """
+    import os
+
+    # Forçar UTF-8 antes de importar pipeline (que importa transcribers)
+    os.environ.setdefault("LC_ALL", "C.UTF-8")
+    os.environ.setdefault("LANG", "C.UTF-8")
+
+    from pathlib import Path
+
+    sess_dir = Path(session_dir).expanduser().resolve()
+    if not sess_dir.is_dir():
+        console.print(f"[red]Diretório não existe:[/red] {sess_dir}")
+        return 1
+    sess_json = sess_dir / "session.json"
+    if not sess_json.exists():
+        console.print(f"[red]session.json ausente em:[/red] {sess_dir}")
+        return 1
+
+    from .pipeline import rerun_pipeline_for_session
+
+    console.print(f"[cyan]Re-rodando pipeline em:[/cyan] {sess_dir}")
+    target = rerun_pipeline_for_session(sess_dir, wait_for_transcribe=True)
+    if target is None:
+        console.print("[red]Falhou — veja /tmp/recordo.log[/red]")
+        return 1
+    console.print(f"[green]✓ Concluído:[/green] {target}")
+    return 0
 
 
 if __name__ == "__main__":

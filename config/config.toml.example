@@ -34,6 +34,20 @@ vad_filter   = true
 model    = "nvidia/parakeet-tdt-0.6b-v3"
 use_onnx = false                   # port ONNX-INT8 mais rápido em CPU
 
+[summarizer]
+backend                = "ollama"  # ollama | heuristic | none
+fallback_to_heuristic  = true      # se ollama offline, usa heuristic
+
+[summarizer.ollama]
+model               = "gemma2:2b"            # gemma2:2b | qwen2.5:3b | llama3.1:8b
+host                = "http://localhost:11434"
+timeout_seconds     = 120
+max_transcript_chars = 30000                 # trunca transcripts longos
+
+[summarizer.heuristic]
+top_n_sentences  = 5
+max_action_items = 8
+
 [auto_detect]
 enabled                          = false  # opt-in
 apps                             = ["teams-for-linux", "Teams", "Microsoft.Teams", "zoom", "Zoom", "Google Chrome", "Chromium", "chrome", "Brave", "firefox", "Firefox", "Mozilla Firefox", "Slack", "Discord", "discord", "WebRTC VoiceEngine"]
