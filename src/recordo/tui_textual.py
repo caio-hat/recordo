@@ -104,6 +104,65 @@ class MarkDialog(ModalScreen[str | None]):
         self.submit()
 
 
+class RenameDialog(ModalScreen[str | None]):
+    """Modal: input para renomear gravação selecionada (assunto novo)."""
+
+    CSS = """
+    RenameDialog {
+        align: center middle;
+    }
+    #rename-box {
+        width: 70;
+        height: 12;
+        border: thick $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    #rename-buttons {
+        height: 3;
+        align: right middle;
+    }
+    """
+
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("escape", "cancel", "Cancelar", show=True),
+        Binding("ctrl+s", "submit", "Salvar", show=True),
+    ]
+
+    def __init__(self, current_subject: str = "") -> None:
+        super().__init__()
+        self._current = current_subject
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="rename-box"):
+            yield Label(f"✏ Renomear: [dim]{self._current}[/dim]")
+            yield Label("[dim]Novo assunto (texto humano-legível):[/dim]")
+            yield Input(
+                value=self._current,
+                placeholder="ex: Reunião Datadog · Product Review",
+                id="rename-input",
+            )
+            with Horizontal(id="rename-buttons"):
+                yield Button("Cancelar", id="btn-rename-cancel", variant="default")
+                yield Button("Renomear", id="btn-rename-ok", variant="primary")
+
+    @on(Button.Pressed, "#btn-rename-cancel")
+    def cancel(self) -> None:
+        self.dismiss(None)
+
+    @on(Button.Pressed, "#btn-rename-ok")
+    @on(Input.Submitted)
+    def submit(self) -> None:
+        text = self.query_one("#rename-input", Input).value.strip()
+        self.dismiss(text or None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def action_submit(self) -> None:
+        self.submit()
+
+
 # ── Painéis ──────────────────────────────────────────────────────────────────
 class StatusPanel(Static):
     """Painel de status grande: indicador + tempo + assunto + segmentos."""
@@ -258,6 +317,7 @@ class RecordoTUI(App):
         Binding("space", "toggle_record", "▶ Iniciar/Parar", show=False),
         Binding("m", "mark", "📍 Marcar", show=True),
         Binding("s", "stop", "⏹ Parar", show=True),
+        Binding("n", "rename_recent", "✏ Renomear última", show=True),
         Binding("R", "reload_config", "↻ Reload config", show=True),
         Binding("ctrl+r", "force_refresh", "↻ Refresh", show=False),
         Binding("?", "help", "? Ajuda", show=True),
@@ -391,6 +451,45 @@ class RecordoTUI(App):
 
     def action_help(self) -> None:
         self.push_screen(HelpScreen())
+
+    async def action_rename_recent(self) -> None:
+        """Renomeia a gravação mais recente em ~/Notas/ via dialog."""
+        import re
+
+        # Pega a gravação mais recente do RecentList
+        recent_panel = self.query_one("#recent-list", RecentList)
+        if not recent_panel.notes:
+            self.notify("Nenhuma gravação para renomear", severity="warning")
+            return
+        target = recent_panel.notes[0]
+
+        # Subject atual = nome do dir sem prefixo de data
+        m = re.match(r"^\d{4}-\d{2}-\d{2}_(.+)$", target.name)
+        current = m.group(1).replace("_", " ") if m else target.name
+
+        def _on_dialog(text: str | None) -> None:
+            if not text:
+                return
+            self._rename_task = asyncio.create_task(self._do_rename(target, text))
+
+        await self.push_screen(RenameDialog(current_subject=current), _on_dialog)
+
+    async def _do_rename(self, target, new_subject: str) -> None:
+        """Roda rename_recording em executor + reporta resultado."""
+        from .rename import rename_recording
+
+        loop = asyncio.get_event_loop()
+        try:
+            result = await loop.run_in_executor(None, lambda: rename_recording(target, new_subject))
+        except Exception as e:
+            self.notify(f"⚠ Erro: {e}", severity="error")
+            return
+
+        if result.ok:
+            self.notify(f"✓ Renomeado: {result.new_dir.name}", severity="information")
+            await self._refresh_recent()
+        else:
+            self.notify(f"⚠ Falhou: {result.error}", severity="error")
 
     # ── Helpers ─────────────────────────────────────────────────────────────
     def _toast_response(self, resp: dict) -> None:

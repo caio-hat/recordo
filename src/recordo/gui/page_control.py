@@ -163,6 +163,7 @@ class ControlPage(Gtk.Box):
         for d in dirs:
             row = RecordingRow(d)
             row.connect_open(self._open_recording)
+            row.connect_rename(self._on_rename_recording)
             self.listbox.append(row)
 
     @staticmethod
@@ -171,3 +172,78 @@ class ControlPage(Gtk.Box):
             subprocess.Popen(["xdg-open", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except FileNotFoundError:
             log.warning("xdg-open não disponível")
+
+    def _on_rename_recording(self, path: Path) -> None:
+        """Abre dialog para renomear a gravação selecionada."""
+        # Subject atual derivado do nome do diretório (sem prefixo de data)
+        import re
+
+        m = re.match(r"^\d{4}-\d{2}-\d{2}_(.+)$", path.name)
+        current = m.group(1).replace("_", " ") if m else path.name
+
+        dlg = Adw.MessageDialog(
+            transient_for=self.window,
+            modal=True,
+            heading="✏️ Renomear gravação",
+            body=f"Novo assunto para:\n[i]{path.name}[/i]",
+        )
+        dlg.set_body_use_markup(True)
+        entry = Gtk.Entry()
+        entry.set_text(current)
+        entry.set_placeholder_text("ex: Reunião Product Review · Datadog")
+        entry.set_activates_default(True)
+        dlg.set_extra_child(entry)
+        dlg.add_response("cancel", "Cancelar")
+        dlg.add_response("ok", "Renomear")
+        dlg.set_default_response("ok")
+        dlg.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
+
+        def on_response(_d, resp_id):
+            if resp_id != "ok":
+                return
+            new_subject = entry.get_text().strip()
+            if not new_subject:
+                self.window.toast("Assunto vazio — operação cancelada")
+                return
+            self._do_rename(path, new_subject)
+
+        dlg.connect("response", on_response)
+        dlg.present()
+
+    def _do_rename(self, path: Path, new_subject: str) -> None:
+        """Roda rename em thread (não trava o main loop)."""
+        import threading
+
+        from gi.repository import GLib
+
+        from ..rename import rename_recording
+
+        def worker():
+            try:
+                result = rename_recording(path, new_subject)
+                GLib.idle_add(self._on_rename_done, result)
+            except Exception as e:
+                log.exception("rename falhou")
+                GLib.idle_add(self._on_rename_error, str(e))
+
+        threading.Thread(target=worker, daemon=True, name="recordo-gui-rename").start()
+
+    def _on_rename_done(self, result) -> bool:
+        from gi.repository import GLib
+
+        if result.ok:
+            self.window.toast(
+                f"✓ Renomeado para: {result.new_dir.name}"
+                + (f" · {len(result.files_updated)} arquivos atualizados" if result.files_updated else "")
+            )
+            # Refresh da lista após pequeno delay
+            GLib.timeout_add(300, self._populate_recordings_once)
+        else:
+            self.window.toast(f"⚠ Falhou: {result.error}")
+        return GLib.SOURCE_REMOVE
+
+    def _on_rename_error(self, msg: str) -> bool:
+        from gi.repository import GLib
+
+        self.window.toast(f"⚠ Erro: {msg}")
+        return GLib.SOURCE_REMOVE

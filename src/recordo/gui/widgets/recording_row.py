@@ -14,6 +14,7 @@ class RecordingRow(Adw.ActionRow):
         super().__init__()
         self.dir = dir_
         self._open_cb = None
+        self._rename_cb = None
 
         # Parse data + subject do nome do diretório
         name = dir_.name
@@ -38,10 +39,19 @@ class RecordingRow(Adw.ActionRow):
             label.add_css_class("dim-label")
             self.add_suffix(label)
 
+        # Botão renomear
+        btn_rename = Gtk.Button(icon_name="document-edit-symbolic")
+        btn_rename.add_css_class("flat")
+        btn_rename.set_valign(Gtk.Align.CENTER)
+        btn_rename.set_tooltip_text("Renomear gravação (mudar assunto)")
+        btn_rename.connect("clicked", self._on_rename)
+        self.add_suffix(btn_rename)
+
         # Botão abrir
         btn = Gtk.Button(icon_name="document-open-symbolic")
         btn.add_css_class("flat")
         btn.set_valign(Gtk.Align.CENTER)
+        btn.set_tooltip_text("Abrir pasta no gerenciador")
         btn.connect("clicked", self._on_open)
         self.add_suffix(btn)
 
@@ -63,6 +73,14 @@ class RecordingRow(Adw.ActionRow):
     def connect_open(self, cb) -> None:
         self._open_cb = cb
 
+    def connect_rename(self, cb) -> None:
+        """cb(dir_path) — chamado quando user clicar 'Renomear'."""
+        self._rename_cb = cb
+
     def _on_open(self, _btn) -> None:
         if self._open_cb:
             self._open_cb(self.dir)
+
+    def _on_rename(self, _btn) -> None:
+        if self._rename_cb:
+            self._rename_cb(self.dir)
