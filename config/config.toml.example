@@ -1,0 +1,48 @@
+# Recordo — exemplo de config.toml
+# Path padrão: ~/.config/recordo/config.toml
+# Editar via GUI (recordo --gui) ou diretamente.
+# Recarregar daemon sem restart: recordo --reload-config
+
+[general]
+output_dir = "~/recordings"        # gravações brutas (raw)
+notas_dir  = "~/Notas"             # destino final pós-pipeline
+
+[recording]
+bitrate          = "32k"           # Opus voz; usa "48k"+ para música
+layout           = "merge"         # merge | split (sys=L mic=R)
+max_segment      = 1800            # auto-cycle a cada 30min
+hard_cap_seconds = 14400           # cap absoluto sessão (4h)
+
+[watchdog]
+silence_threshold_db   = -50.0     # < threshold = silêncio
+silence_max_seconds    = 600       # auto-stop após 10min mic mudo
+silence_check_interval = 30        # checa volume a cada 30s
+reminder_interval      = 900       # notify "ainda gravando" 15/15min
+
+[transcriber]
+backend  = "whisper"               # whisper | parakeet
+language = "pt"                    # ISO 639-1
+
+[transcriber.whisper]
+model        = "large-v3-turbo"    # tiny|base|small|medium|large-v3|large-v3-turbo|distil-large-v3
+device       = "cpu"               # cpu | cuda
+compute_type = "int8"              # int8|int8_float16|float16|float32
+beam_size    = 5
+vad_filter   = true
+
+[transcriber.parakeet]
+model    = "nvidia/parakeet-tdt-0.6b-v3"
+use_onnx = false                   # port ONNX-INT8 mais rápido em CPU
+
+[auto_detect]
+enabled                          = false  # opt-in
+apps                             = ["teams-for-linux", "Teams", "Microsoft.Teams", "zoom", "Zoom", "Google Chrome", "Chromium", "chrome", "Brave", "firefox", "Firefox", "Mozilla Firefox", "Slack", "Discord", "discord", "WebRTC VoiceEngine"]
+deny_apps                        = []
+min_mic_duration_seconds         = 8
+quiet_period_after_stop_minutes  = 5
+poll_interval_seconds            = 5
+
+[ui]
+theme                = "auto"      # auto | light | dark
+window_remember      = true
+last_window_geometry = ""

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Recordo
+GenericName=Meeting Recorder
+Comment=Gravador de reuniões fricção-zero · record + recordar
+Icon=recordo
+Exec=recordo-gui
+Terminal=false
+Categories=AudioVideo;Recorder;
+Keywords=record;recorder;meeting;audio;transcribe;whisper;recordo;
+StartupNotify=true
+StartupWMClass=io.github.caiohat.Recordo

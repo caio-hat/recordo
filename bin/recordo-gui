@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Recordo GUI launcher — chama python -m recordo.gui usando venv dedicado
+set -eu
+
+VENV_PY="$HOME/.local/share/recordo/venv/bin/python"
+
+if [[ ! -x "$VENV_PY" ]]; then
+    notify-send -a Recordo -u critical -i dialog-error "Recordo GUI" \
+        "Venv ausente em $VENV_PY. Rode: bash setup.sh"
+    exit 1
+fi
+
+exec "$VENV_PY" -m recordo.gui "$@"

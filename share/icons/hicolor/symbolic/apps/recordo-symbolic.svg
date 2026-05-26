@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-label="Recordo tray icon">
+  <title>Recordo tray</title>
+  <!-- Símbolo simplificado pra tray/panel applet (24x24) -->
+  <g fill="none" stroke="currentColor" stroke-linecap="round" opacity="0.65" stroke-width="1.2">
+    <path d="M 3.5 12 A 8.5 8.5 0 0 1 12 3.5"/>
+    <path d="M 20.5 12 A 8.5 8.5 0 0 1 12 20.5"/>
+  </g>
+  <circle cx="12" cy="12" r="6" fill="currentColor"/>
+</svg>
