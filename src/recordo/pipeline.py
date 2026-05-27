@@ -397,12 +397,95 @@ def _write_result(
         _interleave_marks_into_txt(txt_out, marks)
 
     nota = nota_md.read_text(encoding="utf-8")
-    embedded = txt_out.read_text(encoding="utf-8")
-    nota = nota.replace(PLACEHOLDER, f"```\n{embedded}\n```")
+    embedded = _format_transcript_for_nota(result, marks=marks)
+    nota = nota.replace(PLACEHOLDER, embedded)
     # atualiza linha backend no frontmatter se já existir
     if "backend:" in nota:
         nota = re.sub(r"^backend:.*$", f"backend: {result.backend}", nota, count=1, flags=re.M)
     nota_md.write_text(nota, encoding="utf-8")
+
+
+def _format_transcript_for_nota(
+    result: TranscriptionResult,
+    *,
+    marks: list[Mark] | None = None,
+    gap_threshold_seconds: float = 3.0,
+    max_chars_per_paragraph: int = 600,
+) -> str:
+    """Renderiza segments como parágrafos com timestamps no início.
+
+    Agrupa segments consecutivos em parágrafos quebrando quando:
+      - O gap (silêncio) entre segments excede `gap_threshold_seconds`
+      - O parágrafo já passou de `max_chars_per_paragraph`
+
+    Marks são interleaveadas no timestamp correspondente como `📍 mm:ss · texto`.
+
+    Formato: cada parágrafo começa com `**[mm:ss]**` em negrito, depois o texto
+    fluido. Resultado é legível e MUITO mais compacto que o bloco com timestamps
+    por segment.
+    """
+    if not result.segments:
+        return "_(transcrição vazia)_"
+
+    sorted_marks = sorted(marks or [], key=lambda m: m.ts_seconds)
+    pending_marks = list(sorted_marks)
+
+    paragraphs: list[tuple[float, str]] = []  # (start_seconds, texto)
+    current_start: float | None = None
+    current_text: list[str] = []
+
+    def _flush() -> None:
+        if current_text and current_start is not None:
+            paragraphs.append((current_start, " ".join(current_text).strip()))
+
+    prev_end = 0.0
+    for seg in result.segments:
+        text = seg.text.strip()
+        if not text:
+            continue
+
+        # Insere marks que vieram antes deste segment
+        while pending_marks and pending_marks[0].ts_seconds <= seg.start:
+            mk = pending_marks.pop(0)
+            if current_text:
+                _flush()
+                current_start = None
+                current_text = []
+            mk_text = mk.text.strip() or "(marca)"
+            paragraphs.append((mk.ts_seconds, f"**📍 MARCA:** {mk_text}"))
+
+        # Decide se quebra parágrafo: gap longo OU caracteres excedidos
+        gap = seg.start - prev_end
+        current_total = sum(len(t) for t in current_text) + len(text)
+        if current_text and (gap > gap_threshold_seconds or current_total > max_chars_per_paragraph):
+            _flush()
+            current_start = None
+            current_text = []
+
+        if current_start is None:
+            current_start = seg.start
+        current_text.append(text)
+        prev_end = seg.end
+
+    _flush()
+
+    # Marks restantes (após o último segment)
+    while pending_marks:
+        mk = pending_marks.pop(0)
+        mk_text = mk.text.strip() or "(marca)"
+        paragraphs.append((mk.ts_seconds, f"**📍 MARCA:** {mk_text}"))
+
+    # Renderiza
+    lines: list[str] = []
+    for start, text in paragraphs:
+        ts = _format_mark_ts(start)
+        if text.startswith("**📍 MARCA:**"):
+            lines.append(text)
+        else:
+            lines.append(f"**[{ts}]** {text}")
+        lines.append("")  # linha em branco entre parágrafos
+
+    return "\n".join(lines).strip() + "\n"
 
 
 def _interleave_marks_into_txt(txt_path: Path, marks: list[Mark]) -> None:

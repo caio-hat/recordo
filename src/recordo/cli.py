@@ -159,6 +159,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Abre tray icon do sistema (XApp.StatusIcon ou AppIndicator) com ações "
         "rápidas: toggle/marcar/abrir GUI/abrir Notas. Independente da GUI.",
     )
+    g.add_argument(
+        "--reformat-transcript",
+        metavar="RECORDING",
+        help="Reformata a seção '## Transcrição' em nota.md de uma gravação existente "
+        "para o formato legível por parágrafos (transcricao.txt fica intacto). "
+        "RECORDING = path/nome/substring única.",
+    )
     return p
 
 
@@ -321,9 +328,107 @@ def main() -> int:
         from .tray import run_tray
 
         return run_tray()
+    if args.reformat_transcript:
+        return _run_reformat_transcript(args.reformat_transcript)
     if args.daemon:
         return _run_daemon(args)
     return _run_standalone(args)
+
+
+def _run_reformat_transcript(recording: str) -> int:
+    """Reformata seção ## Transcrição em nota.md usando transcricao.txt existente.
+
+    Útil pra atualizar gravações antigas que usavam o formato bloco monoespaçado
+    com timestamps por segment. NÃO re-transcreve, NÃO toca em transcricao.txt
+    (fonte de verdade preservada).
+    """
+    import re
+
+    from .pipeline import PLACEHOLDER, _format_transcript_for_nota
+    from .rename import find_recording
+    from .transcribers.base import TranscriptionResult, TranscriptionSegment
+
+    target = find_recording(recording)
+    if target is None:
+        console.print(f"[red]Gravação não encontrada:[/red] {recording}")
+        return 1
+
+    txt_path = target / "transcricao.txt"
+    nota_md = target / "nota.md"
+
+    if not txt_path.exists():
+        console.print(f"[red]transcricao.txt ausente em {target}[/red]")
+        return 1
+    if not nota_md.exists():
+        console.print(f"[red]nota.md ausente em {target}[/red]")
+        return 1
+
+    # Re-parsear segmentos (formato '[start → end] texto')
+    txt_content = txt_path.read_text(encoding="utf-8")
+    segments = []
+    for line in txt_content.splitlines():
+        m = re.match(r"^\[\s*([\d.]+)\s+→\s+([\d.]+)\]\s+(.+)$", line)
+        if m:
+            segments.append(
+                TranscriptionSegment(
+                    start=float(m.group(1)),
+                    end=float(m.group(2)),
+                    text=m.group(3),
+                )
+            )
+    if not segments:
+        console.print(
+            f"[red]Nenhum segment válido em {txt_path.name}[/red] (esperado formato '[start → end] texto')"
+        )
+        return 1
+
+    result = TranscriptionResult(segments=segments, language="pt")
+    new_md = _format_transcript_for_nota(result)
+
+    # Substituir bloco ## Transcrição (com placeholder OU bloco ``` antigo OU
+    # parágrafos antigos do mesmo formato — sempre regenera tudo após o título)
+    nota = nota_md.read_text(encoding="utf-8")
+
+    if "## Transcrição" not in nota:
+        console.print(
+            f"[yellow]Aviso:[/yellow] não foi possível localizar a seção '## Transcrição' em {nota_md.name}"
+        )
+        return 1
+
+    if PLACEHOLDER in nota:
+        new_nota = nota.replace(PLACEHOLDER, new_md)
+    else:
+        # Procura "## Transcrição\n\n```...```\n" (formato antigo)
+        new_nota = re.sub(
+            r"(## Transcrição\s*\n+)```[\s\S]*?```\s*",
+            r"\1" + new_md + "\n",
+            nota,
+            count=1,
+        )
+        if new_nota == nota:
+            # Sem bloco ```; substitui tudo após "## Transcrição" até EOF
+            # (caso já no novo formato → output idêntico, idempotente)
+            new_nota = re.sub(
+                r"(## Transcrição\s*\n+).*$",
+                r"\1" + new_md,
+                nota,
+                count=1,
+                flags=re.S,
+            )
+
+    nota_md.write_text(new_nota, encoding="utf-8")
+    paragraphs = len(re.findall(r"^\*\*\[", new_md, flags=re.M))
+    if new_nota == nota:
+        console.print(
+            f"[cyan]✓ {target.name}[/cyan] "
+            f"[dim](já no formato novo · {len(segments)} segments → {paragraphs} parágrafos)[/dim]"
+        )
+    else:
+        console.print(
+            f"[green]✓ Reformatado:[/green] {target.name} "
+            f"[dim]({len(segments)} segments → {paragraphs} parágrafos)[/dim]"
+        )
+    return 0
 
 
 def _run_rename(recording: str, new_subject: str | None) -> int:
