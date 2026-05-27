@@ -64,6 +64,11 @@ class OllamaSummarizer(Summarizer):
         # pra não estourar contexto do modelo. Modelos pequenos costumam
         # aguentar 8k-32k tokens.
         self.max_chars: int = cfg.get("max_transcript_chars", 30000)
+        # Context window do modelo (tokens). Default 8192 é seguro mas
+        # apertado pra reuniões longas. gemma2:7b/llama3.1:8b/gemma4:e2b
+        # suportam 32768-128000. Configure conforme a hardware/modelo.
+        self.num_ctx: int = cfg.get("num_ctx", 8192)
+        self.temperature: float = cfg.get("temperature", 0.3)
 
     @property
     def name(self) -> str:
@@ -117,8 +122,8 @@ class OllamaSummarizer(Summarizer):
             "stream": False,
             "format": "json",  # força JSON válido (feature do Ollama)
             "options": {
-                "temperature": 0.3,  # baixa pra consistência
-                "num_ctx": 8192,
+                "temperature": self.temperature,  # baixa pra consistência (default 0.3)
+                "num_ctx": self.num_ctx,  # configurável: default 8192, gemma4 aguenta 32k+
             },
         }
         req = Request(

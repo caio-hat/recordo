@@ -77,10 +77,12 @@ DEFAULTS: dict[str, Any] = {
         "fallback_to_local": True,  # se cloud falhar, tenta ollama
         "fallback_to_heuristic": True,  # se ollama falhar (ou foi único), tenta heuristic
         "ollama": {
-            "model": "gemma2:2b",
+            "model": "gemma4:e2b",
             "host": "http://localhost:11434",
-            "timeout_seconds": 120,
-            "max_transcript_chars": 30000,
+            "timeout_seconds": 300,
+            "max_transcript_chars": 80000,
+            "num_ctx": 32768,
+            "temperature": 0.3,
         },
         "gemini": {
             "model": "gemini-2.5-flash",
