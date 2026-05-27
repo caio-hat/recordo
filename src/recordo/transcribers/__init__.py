@@ -39,7 +39,14 @@ def get_transcriber(backend: str, config: dict[str, Any]) -> Transcriber:
         from .cohere import CohereTranscriber
 
         return CohereTranscriber(config.get("cohere", {}))
-    raise ValueError(f"backend desconhecido: {backend!r} (use 'whisper', 'parakeet' ou 'cohere')")
+    if backend == "cohere_local":
+        from .cohere_local import CohereLocalTranscriber
+
+        return CohereLocalTranscriber(config.get("cohere_local", {}))
+    raise ValueError(
+        f"backend desconhecido: {backend!r} "
+        f"(use 'whisper', 'parakeet', 'cohere' ou 'cohere_local')"
+    )
 
 
 def available_backends() -> list[str]:
