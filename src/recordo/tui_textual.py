@@ -20,7 +20,7 @@ import asyncio
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from textual import on
 from textual.app import App, ComposeResult
@@ -318,6 +318,7 @@ class RecordoTUI(App):
         Binding("m", "mark", "📍 Marcar", show=True),
         Binding("s", "stop", "⏹ Parar", show=True),
         Binding("n", "rename_recent", "✏ Renomear última", show=True),
+        Binding("c", "settings", "⚙ Settings", show=True),
         Binding("R", "reload_config", "↻ Reload config", show=True),
         Binding("ctrl+r", "force_refresh", "↻ Refresh", show=False),
         Binding("?", "help", "? Ajuda", show=True),
@@ -452,6 +453,10 @@ class RecordoTUI(App):
     def action_help(self) -> None:
         self.push_screen(HelpScreen())
 
+    def action_settings(self) -> None:
+        """Abre tela de Settings TUI (forms reativos)."""
+        self.push_screen(SettingsScreen())
+
     async def action_rename_recent(self) -> None:
         """Renomeia a gravação mais recente em ~/Notas/ via dialog."""
         import re
@@ -533,6 +538,8 @@ class HelpScreen(ModalScreen):
                 "  r ou Espaço     iniciar/parar gravação\n"
                 "  m               marcar momento (com nota opcional)\n"
                 "  s               parar (não inicia se idle)\n"
+                "  n               renomear última gravação\n"
+                "  c               ⚙ Settings (transcriber/LLM/API keys/Ollama remoto)\n"
                 "  R               recarregar config.toml\n"
                 "  Ctrl+R          forçar refresh dos painéis\n"
                 "  ?               este menu\n"
@@ -544,24 +551,270 @@ class HelpScreen(ModalScreen):
                 "  • O daemon controla 2 ffmpegs paralelos: um pro mic, outro\n"
                 "    pro monitor do sistema (loopback). Salva em Opus 32k voz\n"
                 "    e faz merge ao final em ~/Notas/<data>_<assunto>/.\n\n"
-                "  • Transcrição é automática (faster-whisper, lazy install).\n"
-                "    Pode trocar pra Parakeet em config.toml.\n\n"
+                "  • Transcrição automática (faster-whisper, lazy install).\n"
+                "    Backends: [bold]whisper[/] (local, faster-whisper),\n"
+                "    [bold]parakeet[/] (NVIDIA NeMo TDT v3, 25 idiomas),\n"
+                "    [bold]cohere[/] (API ou local ONNX, SOTA 5.42% WER).\n\n"
+                "  • Resumo automático via LLM. Backends: [bold]ollama[/] (local,\n"
+                "    suporta servidor remoto via host configurável),\n"
+                "    [bold]gemini[/], [bold]openai[/], [bold]anthropic[/],\n"
+                "    [bold]groq/openai_compat[/]. Cascata de fallback automática.\n\n"
                 "[bold]Watchdogs ativos durante gravação:[/]\n"
                 "  • Hard-cap absoluto: 4 horas\n"
                 "  • Auto-stop após 10min de mic mudo\n"
                 "  • Auto-cycle de segmento a cada 30min\n"
                 "  • Lembrete a cada 15min ('🔴 ainda gravando')\n\n"
                 "[bold]Auto-detect (opt-in):[/]\n"
-                "  Liga em Settings (GUI) ou edita ~/.config/recordo/config.toml\n"
+                "  Liga em Settings (tecla 'c') ou edita ~/.config/recordo/config.toml\n"
                 "  com [auto_detect].enabled=true. Daemon escuta eventos do\n"
                 "  PulseAudio e auto-inicia gravação quando Teams/Zoom/Meet/etc\n"
                 "  começam a usar o mic por mais de 8s.\n\n"
+                "[bold]Comandos CLI úteis:[/]\n"
+                "  recordo --tray              ícone na bandeja com ações\n"
+                "  recordo --search 'query'    busca em ~/Notas/\n"
+                "  recordo --rename DIR --new-subject 'Novo'\n"
+                "  recordo --rerun-pipeline DIR  (recovery completo)\n"
+                "  recordo --reformat-transcript DIR  (transcrição em parágrafos)\n\n"
                 "[dim]Esc para fechar.[/]\n",
                 markup=True,
             )
 
     def action_close(self) -> None:
         self.dismiss()
+
+
+# ── Settings Screen ──────────────────────────────────────────────────────────
+class SettingsScreen(ModalScreen):
+    """Configurações editáveis: transcriber, summarizer/LLM, API keys, hosts.
+
+    Forms organizados em seções colapsáveis. Salva config.toml + dispara
+    reload_config no daemon ao confirmar.
+    """
+
+    CSS = """
+    SettingsScreen {
+        align: center middle;
+    }
+    #settings-content {
+        width: 90%;
+        height: 90%;
+        border: thick $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    .field-row {
+        margin: 1 0;
+    }
+    .field-label {
+        color: $primary;
+        text-style: bold;
+    }
+    .section-title {
+        background: $boost;
+        color: $accent;
+        text-style: bold;
+        padding: 0 1;
+        margin-top: 1;
+    }
+    #settings-buttons {
+        height: 3;
+        align: right middle;
+        margin-top: 1;
+    }
+    """
+
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("escape", "cancel", "Cancelar", show=True),
+        Binding("ctrl+s", "save", "Salvar", show=True),
+    ]
+
+    def __init__(self) -> None:
+        super().__init__()
+        from .config import load_config
+
+        self.cfg = load_config()
+        self._inputs: dict[str, Input] = {}
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="settings-content"):
+            yield Static("⚙ [bold cyan]Settings — Recordo[/]", markup=True)
+            yield Static(
+                "[dim]Edite, depois Ctrl+S para salvar, Esc para cancelar.[/]\n",
+                markup=True,
+            )
+
+            # ── Transcrição ──
+            yield Static("✍ Transcrição", classes="section-title")
+            yield from self._field(
+                "transcriber.backend",
+                "Backend (whisper/parakeet/cohere)",
+                str(self.cfg["transcriber"].get("backend", "whisper")),
+            )
+            yield from self._field(
+                "transcriber.language",
+                "Idioma (ISO 639-1)",
+                str(self.cfg["transcriber"].get("language", "pt")),
+            )
+            yield from self._field(
+                "transcriber.whisper.model",
+                "Whisper: model",
+                str(self.cfg["transcriber"]["whisper"].get("model", "large-v3-turbo")),
+            )
+            yield from self._field(
+                "transcriber.whisper.device",
+                "Whisper: device (cpu/cuda/auto)",
+                str(self.cfg["transcriber"]["whisper"].get("device", "cpu")),
+            )
+            yield from self._field(
+                "transcriber.whisper.initial_prompt",
+                "Whisper: initial_prompt (biasing pt-BR)",
+                str(self.cfg["transcriber"]["whisper"].get("initial_prompt", ""))[:200],
+            )
+            yield from self._field(
+                "transcriber.cohere.api_key",
+                "Cohere API key (vazio = env COHERE_API_KEY)",
+                str(self.cfg["transcriber"].get("cohere", {}).get("api_key", "")),
+                password=True,
+            )
+
+            # ── Resumo ──
+            yield Static("🧠 Resumo (LLM)", classes="section-title")
+            yield from self._field(
+                "summarizer.backend",
+                "Backend (ollama/gemini/openai/openai_compat/anthropic/heuristic/none)",
+                str(self.cfg.get("summarizer", {}).get("backend", "ollama")),
+            )
+
+            sum_cfg = self.cfg.get("summarizer", {})
+            yield from self._field(
+                "summarizer.ollama.model",
+                "Ollama: model",
+                str(sum_cfg.get("ollama", {}).get("model", "gemma2:2b")),
+            )
+            yield from self._field(
+                "summarizer.ollama.host",
+                "Ollama: host (localhost OR remoto)",
+                str(sum_cfg.get("ollama", {}).get("host", "http://localhost:11434")),
+            )
+            yield from self._field(
+                "summarizer.gemini.model",
+                "Gemini: model",
+                str(sum_cfg.get("gemini", {}).get("model", "gemini-2.5-flash")),
+            )
+            yield from self._field(
+                "summarizer.gemini.api_key",
+                "Gemini: API key (vazio = env GEMINI_API_KEY)",
+                str(sum_cfg.get("gemini", {}).get("api_key", "")),
+                password=True,
+            )
+            yield from self._field(
+                "summarizer.openai.model",
+                "OpenAI: model",
+                str(sum_cfg.get("openai", {}).get("model", "gpt-4o-mini")),
+            )
+            yield from self._field(
+                "summarizer.openai.api_key",
+                "OpenAI: API key (vazio = env OPENAI_API_KEY)",
+                str(sum_cfg.get("openai", {}).get("api_key", "")),
+                password=True,
+            )
+            yield from self._field(
+                "summarizer.anthropic.model",
+                "Anthropic: model",
+                str(sum_cfg.get("anthropic", {}).get("model", "claude-3-5-haiku-20241022")),
+            )
+            yield from self._field(
+                "summarizer.anthropic.api_key",
+                "Anthropic: API key (vazio = env ANTHROPIC_API_KEY)",
+                str(sum_cfg.get("anthropic", {}).get("api_key", "")),
+                password=True,
+            )
+            yield from self._field(
+                "summarizer.openai_compat.base_url",
+                "Groq/OpenAI-compat: base_url",
+                str(sum_cfg.get("openai_compat", {}).get("base_url", "https://api.groq.com/openai/v1")),
+            )
+            yield from self._field(
+                "summarizer.openai_compat.model",
+                "Groq/OpenAI-compat: model",
+                str(sum_cfg.get("openai_compat", {}).get("model", "llama-3.3-70b-versatile")),
+            )
+            yield from self._field(
+                "summarizer.openai_compat.api_key",
+                "Groq/OpenAI-compat: API key",
+                str(sum_cfg.get("openai_compat", {}).get("api_key", "")),
+                password=True,
+            )
+
+            with Horizontal(id="settings-buttons"):
+                yield Button("Cancelar", id="btn-set-cancel", variant="default")
+                yield Button("Salvar (Ctrl+S)", id="btn-set-save", variant="primary")
+
+    def _field(self, key: str, label: str, value: str, *, password: bool = False):
+        """Gera linha [Label \\n Input] e registra input em self._inputs[key]."""
+        from textual.widgets import Input as Input_
+
+        yield Static(f"  • {label}", classes="field-label")
+        inp = Input_(value=value, password=password, id=f"f-{key.replace('.', '-')}")
+        self._inputs[key] = inp
+        yield inp
+
+    @on(Button.Pressed, "#btn-set-cancel")
+    def cancel(self) -> None:
+        self.dismiss()
+
+    @on(Button.Pressed, "#btn-set-save")
+    def save(self) -> None:
+        self.action_save()
+
+    def action_cancel(self) -> None:
+        self.dismiss()
+
+    def action_save(self) -> None:
+        from .config import save_config
+
+        # Aplica mudanças no cfg dict
+        for key, inp in self._inputs.items():
+            value = inp.value
+            self._set_nested(self.cfg, key, value)
+
+        save_config(self.cfg)
+
+        # Dispara reload_config no daemon
+        try:
+            from .client import send_to_daemon
+
+            resp = send_to_daemon("reload_config")
+            if resp.get("ok"):
+                changes = len(resp.get("changes") or [])
+                msg = f"✓ Config salva — {changes} mudança(s) no daemon"
+            else:
+                msg = f"✓ Config salva (daemon: {resp.get('error', '?')})"
+        except Exception as e:
+            msg = f"✓ Config salva (daemon offline: {e})"
+
+        self.app.notify(msg, severity="information")
+        self.dismiss()
+
+    @staticmethod
+    def _set_nested(cfg: dict, dotted_key: str, value: Any) -> None:
+        """Set cfg['a']['b']['c'] = value via dotted key 'a.b.c'."""
+        parts = dotted_key.split(".")
+        d = cfg
+        for p in parts[:-1]:
+            if p not in d or not isinstance(d[p], dict):
+                d[p] = {}
+            d = d[p]
+        # Conversão por tipo da target — int se number, bool se bool
+        if isinstance(d.get(parts[-1]), bool):
+            d[parts[-1]] = value.lower() in ("true", "1", "yes", "on")
+        elif isinstance(d.get(parts[-1]), int):
+            try:
+                d[parts[-1]] = int(value)
+            except (ValueError, TypeError):
+                d[parts[-1]] = value
+        else:
+            d[parts[-1]] = value
 
 
 def run_textual_tui(*, auto_start_daemon: bool = True) -> int:

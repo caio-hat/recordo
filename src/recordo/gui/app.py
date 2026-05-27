@@ -1,4 +1,4 @@
-"""Recordo Desktop — Adw.Application com sidebar + ViewStack."""
+"""Recordo Desktop — Adw.Application com sidebar + ViewStack + visual tapeado."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, Gio, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, Gtk  # noqa: E402
 
 from .. import __version__  # noqa: E402
 from .page_control import ControlPage  # noqa: E402
@@ -23,17 +23,102 @@ log = logging.getLogger(__name__)
 APP_ID = "io.github.caiohat.Recordo"
 
 
+# CSS custom para tapa visual: cards, cores, espaçamento, sidebar moderna
+_CUSTOM_CSS = """
+/* Sidebar moderna com gradiente sutil */
+.navigation-sidebar {
+    background: alpha(@accent_bg_color, 0.05);
+    padding: 6px;
+}
+
+.navigation-sidebar > row {
+    border-radius: 8px;
+    margin: 2px 0;
+    padding: 10px 12px;
+    transition: all 200ms ease;
+}
+
+.navigation-sidebar > row:selected {
+    background: @accent_bg_color;
+    color: @accent_fg_color;
+    font-weight: bold;
+}
+
+.navigation-sidebar > row:hover:not(:selected) {
+    background: alpha(@accent_bg_color, 0.15);
+}
+
+/* Cards com sombra sutil e cantos arredondados */
+.recordo-card {
+    background: @card_bg_color;
+    border-radius: 12px;
+    padding: 16px;
+    border: 1px solid alpha(@borders, 0.5);
+}
+
+/* Botões de ação primária maiores */
+button.pill.suggested-action {
+    padding: 12px 24px;
+    border-radius: 999px;
+    font-weight: bold;
+    min-height: 44px;
+}
+
+button.pill.destructive-action {
+    padding: 12px 24px;
+    border-radius: 999px;
+    min-height: 44px;
+}
+
+/* Status indicator (recording dot) com cor de erro */
+.recordo-recording-dot {
+    color: @error_color;
+    font-weight: bold;
+}
+
+/* Header bar mais limpa */
+headerbar {
+    min-height: 48px;
+    padding: 0 8px;
+}
+
+/* Title com mais peso */
+.recordo-title {
+    font-size: 18pt;
+    font-weight: bold;
+    color: @accent_color;
+}
+
+.recordo-subtitle {
+    font-size: 11pt;
+    color: @dim_label;
+}
+
+/* PreferencesGroup spacing melhor */
+preferencesgroup {
+    margin: 12px 0;
+}
+
+/* EntryRow com altura mais confortável */
+row.entry {
+    min-height: 52px;
+}
+"""
+
+
 class RecordoWindow(Adw.ApplicationWindow):
     def __init__(self, app: Adw.Application):
         super().__init__(application=app, title="Recordo")
-        self.set_default_size(960, 640)
-        self.set_size_request(720, 480)
+        self.set_default_size(1024, 700)
+        self.set_size_request(800, 540)
 
-        # Toast overlay pra feedback
+        # Toast overlay
         self.toast_overlay = Adw.ToastOverlay()
         self.set_content(self.toast_overlay)
 
+        # Split view sidebar/content
         split = Adw.NavigationSplitView()
+        split.set_sidebar_width_fraction(0.22)
         self.toast_overlay.set_child(split)
 
         # ── Sidebar ──────────────────────────────────────────────────────────
@@ -43,6 +128,13 @@ class RecordoWindow(Adw.ApplicationWindow):
         sidebar_page.set_child(sidebar_box)
 
         header_sidebar = Adw.HeaderBar()
+        # Logo + título no header da sidebar
+        title_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        title_box.append(Gtk.Image.new_from_icon_name("recordo-symbolic"))
+        title_label = Gtk.Label(label="Recordo")
+        title_label.add_css_class("recordo-title")
+        title_box.append(title_label)
+        header_sidebar.set_title_widget(title_box)
         sidebar_box.append(header_sidebar)
 
         scrolled = Gtk.ScrolledWindow(vexpand=True)
@@ -53,20 +145,22 @@ class RecordoWindow(Adw.ApplicationWindow):
         self.listbox.add_css_class("navigation-sidebar")
         scrolled.set_child(self.listbox)
 
-        for icon, label, tag in [
-            ("media-record-symbolic", "Status", "status"),
-            ("media-playback-start-symbolic", "Controle", "control"),
-            ("emblem-system-symbolic", "Configurações", "settings"),
-            ("document-edit-symbolic", "Transcrever", "transcribe"),
-        ]:
+        # Items da sidebar com ícones + descrição opcional
+        sidebar_items = [
+            ("media-record-symbolic", "Status", "status", "Indicador live + tempo"),
+            ("media-playback-start-symbolic", "Controle", "control", "Iniciar/parar/marcar"),
+            ("document-edit-symbolic", "Transcrever", "transcribe", "Re-transcrever notas"),
+            ("emblem-system-symbolic", "Configurações", "settings", "Backends + API keys"),
+        ]
+        for icon, label, tag, _subtitle in sidebar_items:
             row = Gtk.ListBoxRow()
             row_box = Gtk.Box(
                 orientation=Gtk.Orientation.HORIZONTAL,
-                spacing=8,
-                margin_start=12,
-                margin_end=12,
-                margin_top=8,
-                margin_bottom=8,
+                spacing=12,
+                margin_start=4,
+                margin_end=4,
+                margin_top=4,
+                margin_bottom=4,
             )
             row_box.append(Gtk.Image.new_from_icon_name(icon))
             row_box.append(Gtk.Label(label=label, xalign=0, hexpand=True))
@@ -74,11 +168,29 @@ class RecordoWindow(Adw.ApplicationWindow):
             row.tag = tag  # type: ignore[attr-defined]
             self.listbox.append(row)
 
+        # Footer da sidebar — versão + status daemon (futuro)
+        footer_box = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=4,
+            margin_start=12,
+            margin_end=12,
+            margin_top=8,
+            margin_bottom=12,
+        )
+        version_label = Gtk.Label(label=f"v{__version__}")
+        version_label.add_css_class("dim-label")
+        version_label.add_css_class("caption")
+        version_label.set_xalign(0)
+        version_label.set_hexpand(True)
+        footer_box.append(version_label)
+        sidebar_box.append(footer_box)
+
         split.set_sidebar(sidebar_page)
 
         # ── Content ──────────────────────────────────────────────────────────
         self.stack = Gtk.Stack()
         self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.stack.set_transition_duration(200)
 
         self.status_page = StatusPage(window=self)
         self.control_page = ControlPage(window=self)
@@ -96,29 +208,75 @@ class RecordoWindow(Adw.ApplicationWindow):
         content_page.set_child(content_box)
 
         header_content = Adw.HeaderBar()
-        # Menu hambúrguer
+
+        # Botão "Nova gravação" rápido (toggle) no header esquerdo
+        self.btn_quick_toggle = Gtk.Button()
+        toggle_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        toggle_box.append(Gtk.Image.new_from_icon_name("media-record-symbolic"))
+        toggle_box.append(Gtk.Label(label="Gravar"))
+        self.btn_quick_toggle.set_child(toggle_box)
+        self.btn_quick_toggle.add_css_class("suggested-action")
+        self.btn_quick_toggle.set_tooltip_text("Iniciar/parar gravação (Super+R)")
+        self.btn_quick_toggle.connect("clicked", self._on_quick_toggle)
+        header_content.pack_start(self.btn_quick_toggle)
+
+        # Botão abrir ~/Notas no header
+        btn_notas = Gtk.Button(icon_name="folder-symbolic")
+        btn_notas.set_tooltip_text("Abrir ~/Notas/")
+        btn_notas.connect("clicked", self._on_open_notas)
+        header_content.pack_start(btn_notas)
+
+        # Menu hambúrguer (direito)
         menu = Gio.Menu()
         menu.append("Sobre Recordo", "app.about")
+        menu.append("Recarregar config", "app.reload-config")
         menu.append("Encerrar daemon", "app.quit-daemon")
         menu_btn = Gtk.MenuButton()
         menu_btn.set_icon_name("open-menu-symbolic")
         menu_btn.set_menu_model(menu)
         header_content.pack_end(menu_btn)
-        content_box.append(header_content)
 
+        content_box.append(header_content)
         content_box.append(self.stack)
         split.set_content(content_page)
 
         self.listbox.connect("row-selected", self._on_row_selected)
         self.listbox.select_row(self.listbox.get_row_at_index(0))
 
-    def _on_row_selected(self, listbox: Gtk.ListBox, row: Gtk.ListBoxRow) -> None:
+    def _on_row_selected(self, _listbox: Gtk.ListBox, row: Gtk.ListBoxRow) -> None:
         if not row:
             return
         self.stack.set_visible_child_name(row.tag)  # type: ignore[attr-defined]
 
+    def _on_quick_toggle(self, _btn) -> None:
+        from .async_client import call_async
+
+        def on_resp(resp: dict) -> None:
+            if resp.get("ok"):
+                msg = resp.get("subject") or resp.get("target_dir") or "Toggle OK"
+                self.toast(f"✓ {msg}")
+            else:
+                self.toast(f"⚠ {resp.get('error', '?')}")
+
+        call_async("toggle", on_resp)
+
+    @staticmethod
+    def _on_open_notas(_btn) -> None:
+        import subprocess
+        from pathlib import Path
+
+        notas = Path.home() / "Notas"
+        notas.mkdir(parents=True, exist_ok=True)
+        try:
+            subprocess.Popen(
+                ["xdg-open", str(notas)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            log.warning("xdg-open não disponível")
+
     def toast(self, msg: str, timeout: int = 3) -> None:
-        """Adw.Toast pra feedback dentro da janela."""
         t = Adw.Toast.new(msg)
         t.set_timeout(timeout)
         self.toast_overlay.add_toast(t)
@@ -129,9 +287,17 @@ class RecordoApp(Adw.Application):
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
         self.create_action("about", self._show_about)
         self.create_action("quit-daemon", self._quit_daemon)
+        self.create_action("reload-config", self._reload_config)
         self.window: RecordoWindow | None = None
 
     def do_activate(self):
+        # Aplica CSS custom uma vez
+        css = Gtk.CssProvider()
+        css.load_from_data(_CUSTOM_CSS.encode("utf-8"))
+        display = Gdk.Display.get_default()
+        if display:
+            Gtk.StyleContext.add_provider_for_display(display, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
         if not self.window:
             self.window = RecordoWindow(self)
         self.window.present()
@@ -151,7 +317,13 @@ class RecordoApp(Adw.Application):
             application_icon="recordo",
             developer_name="Caio Hat",
             version=__version__,
-            comments="Gravador de reuniões fricção-zero · record + recordar",
+            comments=(
+                "Gravador de reuniões fricção-zero · record + recordar.\n\n"
+                "Backends de transcrição: Whisper (local), Parakeet TDT v3 (NeMo),\n"
+                "Cohere Transcribe (#1 Open ASR Leaderboard 2026).\n\n"
+                "Resumo via LLM: Ollama (local + remoto), Gemini, OpenAI, Anthropic,\n"
+                "Groq/OpenAI-compat. Cascata fallback automática."
+            ),
             website="https://github.com/caio-hat/recordo",
             issue_url="https://github.com/caio-hat/recordo/issues",
             license_type=Gtk.License.MIT_X11,
@@ -167,17 +339,26 @@ class RecordoApp(Adw.Application):
 
         call_async("quit", on_resp)
 
+    def _reload_config(self, *_):
+        from .async_client import call_async
+
+        def on_resp(resp: dict) -> None:
+            if not self.window:
+                return
+            if resp.get("ok"):
+                changes = resp.get("changes") or ["sem mudanças"]
+                self.window.toast(f"✓ Config recarregada · {len(changes)} mudança(s)")
+            else:
+                self.window.toast(f"⚠ {resp.get('error', '?')}")
+
+        call_async("reload_config", on_resp)
+
 
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    # Cinnamon detecção: força tema dark se gtk-theme aponta pra *-Dark*
     style_mgr = Adw.StyleManager.get_default()
     style_mgr.set_color_scheme(Adw.ColorScheme.PREFER_DARK)
     app = RecordoApp()
-    # Não repassar sys.argv: nossos flags (--gui etc) já foram consumidos pelo
-    # argparse do cli.py. GTK Application não reconhece e aborta com
-    # "Opção --gui desconhecida". Passamos só o argv0 pra preservar o nome
-    # do processo na lista de aplicações.
     return app.run([sys.argv[0]])
 
 

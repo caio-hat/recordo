@@ -1,4 +1,14 @@
-"""Page Settings: PreferencesPage espelhando config.toml."""
+"""Page Settings: PreferencesPage espelhando config.toml.
+
+Inclui:
+- Gravação (bitrate, layout, max segment, hard cap)
+- Watchdog (silêncio, lembrete)
+- Transcrição (backend whisper/parakeet/cohere + campos por backend)
+- Resumo LLM (8 backends + API keys com toggle eye + Ollama remoto)
+- Auto-detect
+
+API keys usam PasswordEntryRow + botão eye (Gtk.Button toggle reveal).
+"""
 
 from __future__ import annotations
 
@@ -19,11 +29,12 @@ WHISPER_MODELS = [
     "large-v3",
     "large-v3-turbo",
     "distil-large-v3",
+    "jlondonobo/whisper-large-v2-pt",  # fine-tune pt-BR (WER 6.5%)
 ]
 LAYOUTS = ["merge", "split"]
-BACKENDS = ["whisper", "parakeet"]
+TRANSCRIBE_BACKENDS = ["whisper", "parakeet", "cohere"]
 COMPUTE_TYPES = ["int8", "int8_float16", "float16", "float32"]
-DEVICES = ["cpu", "cuda"]
+DEVICES = ["cpu", "cuda", "auto"]
 SUMMARIZER_BACKENDS = [
     "ollama",
     "gemini",
@@ -36,6 +47,72 @@ SUMMARIZER_BACKENDS = [
 ]
 
 
+def _make_password_row_with_eye(
+    title: str, subtitle: str = "", initial: str = ""
+) -> tuple[Adw.EntryRow, Gtk.Button]:
+    """Cria EntryRow visualmente como password (com botão olho toggle).
+
+    Não usa Adw.PasswordEntryRow direto pra ter controle do botão eye e funcionar
+    em libadwaita variável. Retorna (entry, button) — caller adiciona ao group.
+    """
+    row = Adw.EntryRow(title=title)
+    if subtitle:
+        # Adw.EntryRow não suporta subtitle nativamente — pulamos
+        pass
+    row.set_text(initial)
+    # Configura como password
+    row.set_property("input-purpose", Gtk.InputPurpose.PASSWORD)
+    # Maximum visibility false (Gtk Entry property pra hide)
+    # Adw.EntryRow não expõe diretamente; usa property name
+    try:
+        row.props.input_purpose = Gtk.InputPurpose.PASSWORD
+    except Exception:
+        pass
+    # Inicialmente esconde caracteres via setting da entry interna
+    _set_visibility(row, visible=False)
+
+    # Botão eye (suffix)
+    btn = Gtk.Button.new_from_icon_name("view-conceal-symbolic")
+    btn.set_valign(Gtk.Align.CENTER)
+    btn.add_css_class("flat")
+    btn.set_tooltip_text("Mostrar/ocultar")
+
+    # Estado de visibilidade no botão
+    btn._visible = False  # type: ignore[attr-defined]
+
+    def _toggle(_b: Gtk.Button) -> None:
+        new = not btn._visible  # type: ignore[attr-defined]
+        btn._visible = new  # type: ignore[attr-defined]
+        _set_visibility(row, visible=new)
+        btn.set_icon_name("view-reveal-symbolic" if new else "view-conceal-symbolic")
+
+    btn.connect("clicked", _toggle)
+    row.add_suffix(btn)
+    return row, btn
+
+
+def _set_visibility(entry_row: Adw.EntryRow, *, visible: bool) -> None:
+    """Toggle text visibility do Adw.EntryRow.
+
+    Adw.EntryRow encapsula Gtk.Text internamente. Mexemos via property
+    'visibility' do Gtk.Text.
+    """
+    # Walk children pra achar Gtk.Text
+    child = entry_row.get_first_child()
+    while child is not None:
+        if isinstance(child, Gtk.Text):
+            child.set_visibility(visible)
+            return
+        # Descer mais um nível
+        sub = child.get_first_child() if hasattr(child, "get_first_child") else None
+        while sub is not None:
+            if isinstance(sub, Gtk.Text):
+                sub.set_visibility(visible)
+                return
+            sub = sub.get_next_sibling() if hasattr(sub, "get_next_sibling") else None
+        child = child.get_next_sibling()
+
+
 class SettingsPage(Gtk.ScrolledWindow):
     def __init__(self, window):
         super().__init__(vexpand=True, hexpand=True)
@@ -45,15 +122,41 @@ class SettingsPage(Gtk.ScrolledWindow):
         prefs = Adw.PreferencesPage()
         self.set_child(prefs)
 
-        # ── Recording ────────────────────────────────────────────────────────
-        rec_group = Adw.PreferencesGroup(title="Gravação")
+        # ── Gravação ─────────────────────────────────────────────────────────
+        self._build_recording_group(prefs)
+
+        # ── Watchdog ─────────────────────────────────────────────────────────
+        self._build_watchdog_group(prefs)
+
+        # ── Transcrição ──────────────────────────────────────────────────────
+        self._build_transcriber_group(prefs)
+
+        # ── Resumo (LLM Provider) ────────────────────────────────────────────
+        self._build_summarizer_group(prefs)
+
+        # ── Auto-detect ──────────────────────────────────────────────────────
+        self._build_autodetect_group(prefs)
+
+        # ── Save button ──────────────────────────────────────────────────────
+        save_group = Adw.PreferencesGroup()
+        prefs.add(save_group)
+
+        save_btn = Gtk.Button(label="💾  Salvar & recarregar daemon", halign=Gtk.Align.CENTER)
+        save_btn.add_css_class("pill")
+        save_btn.add_css_class("suggested-action")
+        save_btn.connect("clicked", self._on_save)
+        save_group.add(save_btn)
+
+    # ── Builders ───────────────────────────────────────────────────────────
+    def _build_recording_group(self, prefs: Adw.PreferencesPage) -> None:
+        rec_group = Adw.PreferencesGroup(title="🎙 Gravação")
         prefs.add(rec_group)
 
         self.bitrate_row = Adw.EntryRow(title="Bitrate Opus")
         self.bitrate_row.set_text(self.cfg["recording"]["bitrate"])
         rec_group.add(self.bitrate_row)
 
-        self.layout_row = Adw.ComboRow(title="Layout")
+        self.layout_row = Adw.ComboRow(title="Layout (mic/sys)")
         self.layout_row.set_model(Gtk.StringList.new(LAYOUTS))
         self.layout_row.set_selected(LAYOUTS.index(self.cfg["recording"]["layout"]))
         rec_group.add(self.layout_row)
@@ -68,8 +171,8 @@ class SettingsPage(Gtk.ScrolledWindow):
         self.hard_cap_row.set_value(self.cfg["recording"]["hard_cap_seconds"])
         rec_group.add(self.hard_cap_row)
 
-        # ── Watchdog ─────────────────────────────────────────────────────────
-        wd_group = Adw.PreferencesGroup(title="Watchdog")
+    def _build_watchdog_group(self, prefs: Adw.PreferencesPage) -> None:
+        wd_group = Adw.PreferencesGroup(title="🐕 Watchdog")
         prefs.add(wd_group)
 
         self.silence_db_row = Adw.SpinRow.new_with_range(-80, -10, 1)
@@ -87,54 +190,90 @@ class SettingsPage(Gtk.ScrolledWindow):
         self.reminder_row.set_value(self.cfg["watchdog"]["reminder_interval"])
         wd_group.add(self.reminder_row)
 
-        # ── Transcriber ──────────────────────────────────────────────────────
-        tr_group = Adw.PreferencesGroup(title="Transcrição")
+    def _build_transcriber_group(self, prefs: Adw.PreferencesPage) -> None:
+        tr_group = Adw.PreferencesGroup(
+            title="✍ Transcrição",
+            description="Whisper (local), Parakeet TDT v3 (local NeMo), Cohere (API ou local ONNX).",
+        )
         prefs.add(tr_group)
 
-        self.backend_row = Adw.ComboRow(title="Backend")
-        self.backend_row.set_model(Gtk.StringList.new(BACKENDS))
-        self.backend_row.set_selected(BACKENDS.index(self.cfg["transcriber"]["backend"]))
-        tr_group.add(self.backend_row)
+        cur_backend = self.cfg["transcriber"]["backend"]
+        self.tr_backend_row = Adw.ComboRow(title="Backend")
+        self.tr_backend_row.set_model(Gtk.StringList.new(TRANSCRIBE_BACKENDS))
+        if cur_backend in TRANSCRIBE_BACKENDS:
+            self.tr_backend_row.set_selected(TRANSCRIBE_BACKENDS.index(cur_backend))
+        tr_group.add(self.tr_backend_row)
 
         self.lang_row = Adw.EntryRow(title="Idioma (ISO 639-1)")
         self.lang_row.set_text(self.cfg["transcriber"]["language"])
         tr_group.add(self.lang_row)
 
+        # === Whisper ===
+        wh_cfg = self.cfg["transcriber"]["whisper"]
+
         self.whisper_model_row = Adw.ComboRow(title="Whisper model")
         self.whisper_model_row.set_model(Gtk.StringList.new(WHISPER_MODELS))
-        cur = self.cfg["transcriber"]["whisper"]["model"]
+        cur = wh_cfg.get("model", "large-v3-turbo")
         if cur in WHISPER_MODELS:
             self.whisper_model_row.set_selected(WHISPER_MODELS.index(cur))
+        else:
+            # Modelo custom não na lista: adiciona dinâmico
+            ml = Gtk.StringList.new([*WHISPER_MODELS, cur])
+            self.whisper_model_row.set_model(ml)
+            self.whisper_model_row.set_selected(len(WHISPER_MODELS))
         tr_group.add(self.whisper_model_row)
 
         self.whisper_device_row = Adw.ComboRow(title="Whisper device")
         self.whisper_device_row.set_model(Gtk.StringList.new(DEVICES))
-        self.whisper_device_row.set_selected(
-            DEVICES.index(self.cfg["transcriber"]["whisper"].get("device", "cpu"))
-        )
+        self.whisper_device_row.set_selected(DEVICES.index(wh_cfg.get("device", "cpu")))
         tr_group.add(self.whisper_device_row)
 
         self.whisper_compute_row = Adw.ComboRow(title="Whisper compute_type")
         self.whisper_compute_row.set_model(Gtk.StringList.new(COMPUTE_TYPES))
-        ct = self.cfg["transcriber"]["whisper"].get("compute_type", "int8")
+        ct = wh_cfg.get("compute_type", "int8")
         if ct in COMPUTE_TYPES:
             self.whisper_compute_row.set_selected(COMPUTE_TYPES.index(ct))
         tr_group.add(self.whisper_compute_row)
 
+        self.whisper_prompt_row = Adw.EntryRow(title="Whisper initial_prompt (biasing técnico pt-BR)")
+        self.whisper_prompt_row.set_text(wh_cfg.get("initial_prompt", ""))
+        tr_group.add(self.whisper_prompt_row)
+
+        # === Parakeet ===
         self.parakeet_onnx_row = Adw.SwitchRow(title="Parakeet — usar ONNX-INT8")
-        self.parakeet_onnx_row.set_subtitle("Mais rápido em CPU se port disponível")
-        self.parakeet_onnx_row.set_active(self.cfg["transcriber"]["parakeet"].get("use_onnx", False))
+        self.parakeet_onnx_row.set_subtitle("Mais rápido em CPU (requer port ONNX baixado)")
+        self.parakeet_onnx_row.set_active(self.cfg["transcriber"].get("parakeet", {}).get("use_onnx", False))
         tr_group.add(self.parakeet_onnx_row)
 
-        # ── Resumo (LLM Provider) ────────────────────────────────────────────
+        # === Cohere ===
+        co_cfg = self.cfg["transcriber"].get("cohere", {})
+
+        self.cohere_model_row = Adw.EntryRow(title="Cohere model")
+        self.cohere_model_row.set_text(co_cfg.get("model", "cohere-transcribe-03-2026"))
+        tr_group.add(self.cohere_model_row)
+
+        self.cohere_key_row, self.cohere_key_btn = _make_password_row_with_eye(
+            "Cohere API key (vazio = env COHERE_API_KEY)",
+            initial=co_cfg.get("api_key", ""),
+        )
+        tr_group.add(self.cohere_key_row)
+
+        self.cohere_endpoint_row = Adw.EntryRow(title="Cohere endpoint (override)")
+        self.cohere_endpoint_row.set_text(
+            co_cfg.get("endpoint", "https://api.cohere.com/v2/audio/transcriptions")
+        )
+        tr_group.add(self.cohere_endpoint_row)
+
+    def _build_summarizer_group(self, prefs: Adw.PreferencesPage) -> None:
         sum_group = Adw.PreferencesGroup(
-            title="Resumo automático",
-            description="Provedor LLM para gerar resumo + tópicos das gravações.",
+            title="🧠 Resumo automático (LLM)",
+            description="Ollama (local), Gemini, OpenAI, Groq/Together, Anthropic, Azure. Cascata fallback automático.",
         )
         prefs.add(sum_group)
 
         sum_cfg = self.cfg.get("summarizer", {})
         cur_backend = sum_cfg.get("backend", "ollama")
+
         self.sum_backend_row = Adw.ComboRow(title="Provider")
         self.sum_backend_row.set_model(Gtk.StringList.new(SUMMARIZER_BACKENDS))
         if cur_backend in SUMMARIZER_BACKENDS:
@@ -142,76 +281,83 @@ class SettingsPage(Gtk.ScrolledWindow):
         sum_group.add(self.sum_backend_row)
 
         # Ollama
+        ol_cfg = sum_cfg.get("ollama", {})
         self.sum_ollama_model_row = Adw.EntryRow(title="Ollama: model")
-        self.sum_ollama_model_row.set_text(sum_cfg.get("ollama", {}).get("model", "gemma2:2b"))
+        self.sum_ollama_model_row.set_text(ol_cfg.get("model", "gemma2:2b"))
         sum_group.add(self.sum_ollama_model_row)
 
-        self.sum_ollama_host_row = Adw.EntryRow(title="Ollama: host")
-        self.sum_ollama_host_row.set_text(sum_cfg.get("ollama", {}).get("host", "http://localhost:11434"))
+        self.sum_ollama_host_row = Adw.EntryRow(
+            title="Ollama: host (local OU servidor remoto)",
+        )
+        self.sum_ollama_host_row.set_text(ol_cfg.get("host", "http://localhost:11434"))
         sum_group.add(self.sum_ollama_host_row)
 
+        self.sum_ollama_ctx_row = Adw.SpinRow.new_with_range(2048, 131072, 2048)
+        self.sum_ollama_ctx_row.set_title("Ollama: num_ctx (contexto)")
+        self.sum_ollama_ctx_row.set_value(ol_cfg.get("num_ctx", 32768))
+        sum_group.add(self.sum_ollama_ctx_row)
+
         # Gemini
+        gem_cfg = sum_cfg.get("gemini", {})
         self.sum_gemini_model_row = Adw.EntryRow(title="Gemini: model")
-        self.sum_gemini_model_row.set_text(sum_cfg.get("gemini", {}).get("model", "gemini-2.5-flash"))
+        self.sum_gemini_model_row.set_text(gem_cfg.get("model", "gemini-2.5-flash"))
         sum_group.add(self.sum_gemini_model_row)
 
-        self.sum_gemini_key_row = Adw.PasswordEntryRow(
-            title="Gemini: API key (vazio = usa env GEMINI_API_KEY)"
+        self.sum_gemini_key_row, self.sum_gemini_key_btn = _make_password_row_with_eye(
+            "Gemini: API key (vazio = env GEMINI_API_KEY)",
+            initial=gem_cfg.get("api_key", ""),
         )
-        self.sum_gemini_key_row.set_text(sum_cfg.get("gemini", {}).get("api_key", ""))
         sum_group.add(self.sum_gemini_key_row)
 
         # OpenAI
+        oa_cfg = sum_cfg.get("openai", {})
         self.sum_openai_model_row = Adw.EntryRow(title="OpenAI: model")
-        self.sum_openai_model_row.set_text(sum_cfg.get("openai", {}).get("model", "gpt-4o-mini"))
+        self.sum_openai_model_row.set_text(oa_cfg.get("model", "gpt-4o-mini"))
         sum_group.add(self.sum_openai_model_row)
 
-        self.sum_openai_key_row = Adw.PasswordEntryRow(
-            title="OpenAI: API key (vazio = usa env OPENAI_API_KEY)"
+        self.sum_openai_key_row, self.sum_openai_key_btn = _make_password_row_with_eye(
+            "OpenAI: API key (vazio = env OPENAI_API_KEY)",
+            initial=oa_cfg.get("api_key", ""),
         )
-        self.sum_openai_key_row.set_text(sum_cfg.get("openai", {}).get("api_key", ""))
         sum_group.add(self.sum_openai_key_row)
 
         # Anthropic
+        an_cfg = sum_cfg.get("anthropic", {})
         self.sum_anthropic_model_row = Adw.EntryRow(title="Anthropic: model")
-        self.sum_anthropic_model_row.set_text(
-            sum_cfg.get("anthropic", {}).get("model", "claude-3-5-haiku-20241022")
-        )
+        self.sum_anthropic_model_row.set_text(an_cfg.get("model", "claude-3-5-haiku-20241022"))
         sum_group.add(self.sum_anthropic_model_row)
 
-        self.sum_anthropic_key_row = Adw.PasswordEntryRow(
-            title="Anthropic: API key (vazio = usa env ANTHROPIC_API_KEY)"
+        self.sum_anthropic_key_row, self.sum_anthropic_key_btn = _make_password_row_with_eye(
+            "Anthropic: API key (vazio = env ANTHROPIC_API_KEY)",
+            initial=an_cfg.get("api_key", ""),
         )
-        self.sum_anthropic_key_row.set_text(sum_cfg.get("anthropic", {}).get("api_key", ""))
         sum_group.add(self.sum_anthropic_key_row)
 
-        # OpenAI-compatible (Groq/Together/etc)
-        self.sum_compat_url_row = Adw.EntryRow(title="OpenAI-compatible: base_url")
-        self.sum_compat_url_row.set_text(
-            sum_cfg.get("openai_compat", {}).get("base_url", "https://api.groq.com/openai/v1")
-        )
+        # OpenAI-compatible (Groq/Together/Fireworks/etc)
+        oc_cfg = sum_cfg.get("openai_compat", {})
+        self.sum_compat_url_row = Adw.EntryRow(title="OpenAI-compat: base_url")
+        self.sum_compat_url_row.set_text(oc_cfg.get("base_url", "https://api.groq.com/openai/v1"))
         sum_group.add(self.sum_compat_url_row)
 
-        self.sum_compat_model_row = Adw.EntryRow(title="OpenAI-compatible: model")
-        self.sum_compat_model_row.set_text(
-            sum_cfg.get("openai_compat", {}).get("model", "llama-3.3-70b-versatile")
-        )
+        self.sum_compat_model_row = Adw.EntryRow(title="OpenAI-compat: model")
+        self.sum_compat_model_row.set_text(oc_cfg.get("model", "llama-3.3-70b-versatile"))
         sum_group.add(self.sum_compat_model_row)
 
-        self.sum_compat_key_row = Adw.PasswordEntryRow(
-            title="OpenAI-compatible: API key (vazio = usa env GROQ_API_KEY)"
+        self.sum_compat_key_row, self.sum_compat_key_btn = _make_password_row_with_eye(
+            "OpenAI-compat: API key (env GROQ_API_KEY/TOGETHER_API_KEY/etc)",
+            initial=oc_cfg.get("api_key", ""),
         )
-        self.sum_compat_key_row.set_text(sum_cfg.get("openai_compat", {}).get("api_key", ""))
         sum_group.add(self.sum_compat_key_row)
 
+        # Fallbacks
         self.sum_fallback_local_row = Adw.SwitchRow(
-            title="Fallback automático para Ollama em caso de falha cloud"
+            title="↩ Fallback automático para Ollama em caso de falha cloud"
         )
         self.sum_fallback_local_row.set_active(sum_cfg.get("fallback_to_local", True))
         sum_group.add(self.sum_fallback_local_row)
 
         self.sum_fallback_heuristic_row = Adw.SwitchRow(
-            title="Fallback final para heuristic (sempre disponível)"
+            title="🔁 Fallback final: heurístico (sempre disponível)"
         )
         self.sum_fallback_heuristic_row.set_active(sum_cfg.get("fallback_to_heuristic", True))
         sum_group.add(self.sum_fallback_heuristic_row)
@@ -222,19 +368,26 @@ class SettingsPage(Gtk.ScrolledWindow):
             spacing=12,
             halign=Gtk.Align.CENTER,
             margin_top=8,
+            margin_bottom=8,
         )
-        self.btn_test_llm = Gtk.Button(label="🔍 Testar provedor selecionado")
+        self.btn_test_llm = Gtk.Button(label="🔍  Testar provider selecionado")
         self.btn_test_llm.add_css_class("pill")
         self.btn_test_llm.connect("clicked", self._on_test_llm)
         test_box.append(self.btn_test_llm)
+
         self.sum_test_status = Gtk.Label(xalign=0)
         self.sum_test_status.add_css_class("dim-label")
         test_box.append(self.sum_test_status)
-        sum_group.add(Adw.PreferencesRow(child=test_box))
 
-        # ── Auto-detect ──────────────────────────────────────────────────────
+        # PreferencesRow não aceita box diretamente; embutimos em ListBoxRow
+        wrap_row = Adw.PreferencesRow()
+        wrap_row.set_child(test_box)
+        wrap_row.set_activatable(False)
+        sum_group.add(wrap_row)
+
+    def _build_autodetect_group(self, prefs: Adw.PreferencesPage) -> None:
         ad_group = Adw.PreferencesGroup(
-            title="Auto-detect Call",
+            title="🤖 Auto-detect Call",
             description="Detecta apps usando mic e inicia gravação automática (agressivo).",
         )
         prefs.add(ad_group)
@@ -253,55 +406,67 @@ class SettingsPage(Gtk.ScrolledWindow):
         self.ad_quiet_row.set_value(self.cfg["auto_detect"]["quiet_period_after_stop_minutes"])
         ad_group.add(self.ad_quiet_row)
 
-        # ── Save button ──────────────────────────────────────────────────────
-        save_group = Adw.PreferencesGroup()
-        prefs.add(save_group)
-
-        save_btn = Gtk.Button(label="Salvar & recarregar daemon", halign=Gtk.Align.CENTER)
-        save_btn.add_css_class("pill")
-        save_btn.add_css_class("suggested-action")
-        save_btn.connect("clicked", self._on_save)
-        save_group.add(save_btn)
-
+    # ── Save ───────────────────────────────────────────────────────────────
     def _on_save(self, _btn) -> None:
         try:
+            # Recording
             self.cfg["recording"]["bitrate"] = self.bitrate_row.get_text()
             self.cfg["recording"]["layout"] = LAYOUTS[self.layout_row.get_selected()]
             self.cfg["recording"]["max_segment"] = int(self.max_seg_row.get_value())
             self.cfg["recording"]["hard_cap_seconds"] = int(self.hard_cap_row.get_value())
 
+            # Watchdog
             self.cfg["watchdog"]["silence_threshold_db"] = float(self.silence_db_row.get_value())
             self.cfg["watchdog"]["silence_max_seconds"] = int(self.silence_max_row.get_value())
             self.cfg["watchdog"]["reminder_interval"] = int(self.reminder_row.get_value())
 
-            self.cfg["transcriber"]["backend"] = BACKENDS[self.backend_row.get_selected()]
+            # Transcriber
+            self.cfg["transcriber"]["backend"] = TRANSCRIBE_BACKENDS[self.tr_backend_row.get_selected()]
             self.cfg["transcriber"]["language"] = self.lang_row.get_text()
-            self.cfg["transcriber"]["whisper"]["model"] = WHISPER_MODELS[
-                self.whisper_model_row.get_selected()
-            ]
+
+            # Pode estar custom → busca selected via lookup do StringList
+            ml = self.whisper_model_row.get_model()
+            sel_idx = self.whisper_model_row.get_selected()
+            self.cfg["transcriber"]["whisper"]["model"] = ml.get_string(sel_idx)
             self.cfg["transcriber"]["whisper"]["device"] = DEVICES[self.whisper_device_row.get_selected()]
             self.cfg["transcriber"]["whisper"]["compute_type"] = COMPUTE_TYPES[
                 self.whisper_compute_row.get_selected()
             ]
-            self.cfg["transcriber"]["parakeet"]["use_onnx"] = self.parakeet_onnx_row.get_active()
+            self.cfg["transcriber"]["whisper"]["initial_prompt"] = self.whisper_prompt_row.get_text()
 
-            # Summarizer (LLM Provider)
+            self.cfg["transcriber"].setdefault("parakeet", {})["use_onnx"] = (
+                self.parakeet_onnx_row.get_active()
+            )
+
+            co_cfg = self.cfg["transcriber"].setdefault("cohere", {})
+            co_cfg["model"] = self.cohere_model_row.get_text()
+            co_cfg["api_key"] = self.cohere_key_row.get_text()
+            co_cfg["endpoint"] = self.cohere_endpoint_row.get_text()
+
+            # Summarizer
             sum_cfg = self.cfg.setdefault("summarizer", {})
             sum_cfg["backend"] = SUMMARIZER_BACKENDS[self.sum_backend_row.get_selected()]
             sum_cfg["fallback_to_local"] = self.sum_fallback_local_row.get_active()
             sum_cfg["fallback_to_heuristic"] = self.sum_fallback_heuristic_row.get_active()
+
             sum_cfg.setdefault("ollama", {})["model"] = self.sum_ollama_model_row.get_text()
             sum_cfg["ollama"]["host"] = self.sum_ollama_host_row.get_text()
+            sum_cfg["ollama"]["num_ctx"] = int(self.sum_ollama_ctx_row.get_value())
+
             sum_cfg.setdefault("gemini", {})["model"] = self.sum_gemini_model_row.get_text()
             sum_cfg["gemini"]["api_key"] = self.sum_gemini_key_row.get_text()
+
             sum_cfg.setdefault("openai", {})["model"] = self.sum_openai_model_row.get_text()
             sum_cfg["openai"]["api_key"] = self.sum_openai_key_row.get_text()
+
             sum_cfg.setdefault("anthropic", {})["model"] = self.sum_anthropic_model_row.get_text()
             sum_cfg["anthropic"]["api_key"] = self.sum_anthropic_key_row.get_text()
+
             sum_cfg.setdefault("openai_compat", {})["base_url"] = self.sum_compat_url_row.get_text()
             sum_cfg["openai_compat"]["model"] = self.sum_compat_model_row.get_text()
             sum_cfg["openai_compat"]["api_key"] = self.sum_compat_key_row.get_text()
 
+            # Auto-detect
             self.cfg["auto_detect"]["enabled"] = self.ad_enabled_row.get_active()
             self.cfg["auto_detect"]["min_mic_duration_seconds"] = int(self.ad_min_dur_row.get_value())
             self.cfg["auto_detect"]["quiet_period_after_stop_minutes"] = int(self.ad_quiet_row.get_value())
@@ -312,17 +477,17 @@ class SettingsPage(Gtk.ScrolledWindow):
             def on_reload(resp: dict) -> None:
                 if resp.get("ok"):
                     changes = resp.get("changes") or ["sem mudanças relevantes ao daemon"]
-                    self.window.toast(f"Config salva · {len(changes)} mudança(s) aplicada(s)")
+                    self.window.toast(f"✓ Config salva · {len(changes)} mudança(s) aplicada(s)")
                 else:
-                    self.window.toast(f"Salvo mas reload falhou: {resp.get('error', '?')}")
+                    self.window.toast(f"⚠ Salvo mas reload falhou: {resp.get('error', '?')}")
 
             call_async("reload_config", on_reload)
         except Exception as e:
             log.exception("erro ao salvar config")
-            self.window.toast(f"Erro: {e}")
+            self.window.toast(f"⚠ Erro: {e}")
 
+    # ── Test LLM ───────────────────────────────────────────────────────────
     def _on_test_llm(self, _btn) -> None:
-        """Roda teste rápido do provider selecionado."""
         import threading
 
         from gi.repository import GLib
@@ -330,38 +495,42 @@ class SettingsPage(Gtk.ScrolledWindow):
         from ..summarizer import get_summarizer
 
         backend = SUMMARIZER_BACKENDS[self.sum_backend_row.get_selected()]
-        # Coleta config atual da UI (sem salvar)
         provider_cfg = {
             "ollama": {
                 "model": self.sum_ollama_model_row.get_text(),
                 "host": self.sum_ollama_host_row.get_text(),
+                "num_ctx": int(self.sum_ollama_ctx_row.get_value()),
+                "timeout_seconds": 60,
             },
             "gemini": {
                 "model": self.sum_gemini_model_row.get_text(),
                 "api_key": self.sum_gemini_key_row.get_text(),
+                "timeout_seconds": 30,
             },
             "openai": {
                 "model": self.sum_openai_model_row.get_text(),
                 "api_key": self.sum_openai_key_row.get_text(),
+                "timeout_seconds": 30,
             },
             "anthropic": {
                 "model": self.sum_anthropic_model_row.get_text(),
                 "api_key": self.sum_anthropic_key_row.get_text(),
+                "timeout_seconds": 30,
             },
             "openai_compat": {
                 "base_url": self.sum_compat_url_row.get_text(),
                 "model": self.sum_compat_model_row.get_text(),
                 "api_key": self.sum_compat_key_row.get_text(),
+                "timeout_seconds": 30,
             },
         }
 
         self.btn_test_llm.set_sensitive(False)
         self.sum_test_status.set_markup(f"<i>Testando {backend}…</i>")
 
-        def worker():
+        def worker() -> None:
             try:
                 summ = get_summarizer(backend, provider_cfg)
-                # Resumo curto pra teste rápido
                 test_text = (
                     "Esta é uma transcrição de teste. Vamos validar que o provedor "
                     "responde corretamente. Decidimos testar a integração."
@@ -373,7 +542,7 @@ class SettingsPage(Gtk.ScrolledWindow):
                     GLib.idle_add(
                         self._on_test_done,
                         True,
-                        f"OK — {result.backend} respondeu",
+                        f"OK — {result.backend}",
                     )
             except Exception as e:
                 log.exception("test_llm falhou")
@@ -382,10 +551,10 @@ class SettingsPage(Gtk.ScrolledWindow):
         threading.Thread(target=worker, daemon=True, name="recordo-gui-test-llm").start()
 
     def _on_test_done(self, ok: bool, msg: str) -> bool:
+        from gi.repository import GLib
+
         self.btn_test_llm.set_sensitive(True)
         icon = "✅" if ok else "❌"
         self.sum_test_status.set_markup(f"{icon} {msg}")
         self.window.toast(f"{icon} {msg}")
-        from gi.repository import GLib
-
         return GLib.SOURCE_REMOVE
