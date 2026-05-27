@@ -58,18 +58,45 @@ DEFAULTS: dict[str, Any] = {
         "reminder_interval": 15 * 60,
     },
     "transcriber": {
-        "backend": "whisper",  # whisper | parakeet
+        "backend": "whisper",  # whisper | parakeet | cohere
         "language": "pt",
         "whisper": {
+            # Para qualidade máxima em pt-BR: "large-v3" (vs Turbo, +0.3% WER mas
+            # nota mais limpa). Para velocidade: "large-v3-turbo".
+            # Para máxima qualidade pt-BR: fine-tune "jlondonobo/whisper-large-v2-pt"
             "model": "large-v3-turbo",
             "device": "cpu",
             "compute_type": "int8",
             "beam_size": 5,
             "vad_filter": True,
+            # Anti-hallucination guards (já default — exposição para overrides):
+            "condition_on_previous_text": False,
+            "compression_ratio_threshold": 2.4,
+            "log_prob_threshold": -1.0,
+            "no_speech_threshold": 0.6,
+            # initial_prompt: biasing para domínio. Pode reduzir 10-30% WER em
+            # reuniões técnicas. Modifique conforme seu domínio.
+            "initial_prompt": (
+                "Transcrição de reunião técnica em português brasileiro. "
+                "Termos comuns: API, Datadog, Kubernetes, AWS, Azure, GCP, "
+                "observabilidade, monitoramento, dashboard, métricas, logs, "
+                "endpoint, microsserviço, deploy, pipeline, infraestrutura, "
+                "Cloud, SaaS, on-premise, integração, serverless."
+            ),
         },
         "parakeet": {
+            # v3 é multilingual (25 idiomas EU incluindo PT) com WER 6.34%
             "model": "nvidia/parakeet-tdt-0.6b-v3",
             "use_onnx": False,
+        },
+        "cohere": {
+            # Cohere Transcribe (lançado 26/mar/2026) — SOTA Open ASR Leaderboard
+            # WER 5.42%, 3x mais rápido que outros. Apache 2.0.
+            "model": "cohere-transcribe-03-2026",
+            "api_key_env": "COHERE_API_KEY",  # ou api_key direto
+            "timeout_seconds": 300,
+            "chunk_seconds": 600,  # 10min — caber no limite 25MB da API
+            "endpoint": "https://api.cohere.com/v2/audio/transcriptions",
         },
     },
     "summarizer": {
