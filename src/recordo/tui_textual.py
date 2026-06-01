@@ -796,25 +796,95 @@ class SettingsScreen(ModalScreen):
         self.app.notify(msg, severity="information")
         self.dismiss()
 
-    @staticmethod
-    def _set_nested(cfg: dict, dotted_key: str, value: Any) -> None:
-        """Set cfg['a']['b']['c'] = value via dotted key 'a.b.c'."""
+    # ── Type coercion table for _set_nested ──
+    # Explicit dotted-key → type mapping. Default is str. Bool accepts
+    # "true"/"1"/"yes"/"on" case-insensitive. Int parses with int(), float
+    # with float(); failures fall back to raw string.
+    _FIELD_TYPES: ClassVar[dict[str, type]] = {
+        # Recording
+        "recording.max_segment": int,
+        "recording.hard_cap_seconds": int,
+        # Watchdog
+        "watchdog.silence_threshold_db": float,
+        "watchdog.silence_max_seconds": int,
+        "watchdog.silence_check_interval": int,
+        "watchdog.reminder_interval": int,
+        # Transcriber
+        "transcriber.whisper.beam_size": int,
+        "transcriber.whisper.vad_filter": bool,
+        "transcriber.whisper.condition_on_previous_text": bool,
+        "transcriber.whisper.compression_ratio_threshold": float,
+        "transcriber.whisper.log_prob_threshold": float,
+        "transcriber.whisper.no_speech_threshold": float,
+        "transcriber.parakeet.use_onnx": bool,
+        "transcriber.cohere.timeout_seconds": int,
+        "transcriber.cohere.chunk_seconds": int,
+        # Summarizer
+        "summarizer.fallback_to_local": bool,
+        "summarizer.fallback_to_heuristic": bool,
+        "summarizer.ollama.timeout_seconds": int,
+        "summarizer.ollama.max_transcript_chars": int,
+        "summarizer.ollama.num_ctx": int,
+        "summarizer.ollama.temperature": float,
+        "summarizer.gemini.timeout_seconds": int,
+        "summarizer.gemini.max_transcript_chars": int,
+        "summarizer.gemini.temperature": float,
+        "summarizer.openai.timeout_seconds": int,
+        "summarizer.openai.max_transcript_chars": int,
+        "summarizer.openai.temperature": float,
+        "summarizer.anthropic.timeout_seconds": int,
+        "summarizer.anthropic.max_transcript_chars": int,
+        "summarizer.anthropic.temperature": float,
+        "summarizer.anthropic.max_tokens": int,
+        "summarizer.openai_compat.timeout_seconds": int,
+        "summarizer.openai_compat.max_transcript_chars": int,
+        "summarizer.openai_compat.temperature": float,
+        "summarizer.openai_compat.supports_json_object": bool,
+        "summarizer.heuristic.top_n_sentences": int,
+        "summarizer.heuristic.max_action_items": int,
+        # Auto-detect
+        "auto_detect.enabled": bool,
+        "auto_detect.min_mic_duration_seconds": int,
+        "auto_detect.quiet_period_after_stop_minutes": int,
+        "auto_detect.poll_interval_seconds": int,
+        # UI
+        "ui.window_remember": bool,
+    }
+
+    @classmethod
+    def _set_nested(cls, cfg: dict, dotted_key: str, value: Any) -> None:
+        """Set cfg['a']['b']['c'] = value via dotted key 'a.b.c'.
+
+        Type coercion is driven by the explicit `_FIELD_TYPES` table. This
+        avoids the brittle inference-from-existing-value strategy that
+        breaks when a key is new (not yet present in DEFAULTS).
+        """
         parts = dotted_key.split(".")
         d = cfg
         for p in parts[:-1]:
             if p not in d or not isinstance(d[p], dict):
                 d[p] = {}
             d = d[p]
-        # Conversão por tipo da target — int se number, bool se bool
-        if isinstance(d.get(parts[-1]), bool):
-            d[parts[-1]] = value.lower() in ("true", "1", "yes", "on")
-        elif isinstance(d.get(parts[-1]), int):
+
+        target_type = cls._FIELD_TYPES.get(dotted_key, str)
+        d[parts[-1]] = cls._coerce(value, target_type)
+
+    @staticmethod
+    def _coerce(value: str, target_type: type) -> Any:
+        """Coerce string value to target_type; on failure, return raw string."""
+        if target_type is bool:
+            return value.strip().lower() in ("true", "1", "yes", "on", "y", "t")
+        if target_type is int:
             try:
-                d[parts[-1]] = int(value)
+                return int(value.strip())
             except (ValueError, TypeError):
-                d[parts[-1]] = value
-        else:
-            d[parts[-1]] = value
+                return value
+        if target_type is float:
+            try:
+                return float(value.strip())
+            except (ValueError, TypeError):
+                return value
+        return value
 
 
 def run_textual_tui(*, auto_start_daemon: bool = True) -> int:

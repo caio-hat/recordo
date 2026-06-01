@@ -65,9 +65,7 @@ class TranscribePage(Gtk.Box):
         self.btn_run.add_css_class("pill")
         self.btn_run.add_css_class("suggested-action")
         self.btn_run.set_sensitive(False)
-        self.btn_run.set_tooltip_text(
-            "Roda transcrição usando o backend configurado em Configurações."
-        )
+        self.btn_run.set_tooltip_text("Roda transcrição usando o backend configurado em Configurações.")
         self.btn_run.connect("clicked", self._on_run)
         run_box.append(self.btn_run)
 
@@ -243,8 +241,6 @@ class TranscribePage(Gtk.Box):
             self.status_label.set_text(f"⚠ Erro: {error}")
             self.window.toast(f"⚠ Falhou: {error}")
         else:
-            self.status_label.set_text(
-                f"✓ {len(result.segments)} segmentos · backend={result.backend}"
-            )
+            self.status_label.set_text(f"✓ {len(result.segments)} segmentos · backend={result.backend}")
             self.window.toast(f"✓ Re-transcrito com {result.backend}")
         return GLib.SOURCE_REMOVE

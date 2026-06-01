@@ -30,6 +30,7 @@ dev = [
     "pytest>=7",
     "pytest-asyncio>=0.23",
     "pytest-cov>=4",
+    "pytest-xvfb>=3",
     "ruff>=0.5",
 ]
 
@@ -61,3 +62,6 @@ testpaths = ["tests"]
 python_files = "test_*.py"
 addopts = "-v --tb=short"
 asyncio_mode = "auto"
+markers = [
+    "gui: GUI smoke tests requiring display (use pytest -m 'not gui' to skip)",
+]

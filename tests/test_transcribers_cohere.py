@@ -224,3 +224,47 @@ class TestWhisperImprovements:
         )
         assert s.condition_on_previous_text is True
         assert s.no_speech_threshold == 0.3
+
+
+class TestCohereLocalBlocked:
+    """B7 regression: cohere_local must raise NotImplementedError."""
+
+    def test_transcribe_raises_not_implemented(self, tmp_path):
+        from recordo.transcribers.cohere_local import CohereLocalTranscriber
+
+        s = CohereLocalTranscriber({})
+        audio = tmp_path / "fake.opus"
+        audio.write_bytes(b"x")
+        with pytest.raises(NotImplementedError, match="não está totalmente implementado"):
+            s.transcribe(audio)
+
+    def test_error_mentions_alternatives(self, tmp_path):
+        from recordo.transcribers.cohere_local import CohereLocalTranscriber
+
+        s = CohereLocalTranscriber({})
+        audio = tmp_path / "fake.opus"
+        audio.write_bytes(b"x")
+        try:
+            s.transcribe(audio)
+        except NotImplementedError as e:
+            msg = str(e)
+            assert "cohere" in msg.lower()
+            assert "whisper" in msg.lower()
+            assert "parakeet" in msg.lower()
+
+    def test_via_factory_also_raises(self, tmp_path):
+        from recordo.transcribers import get_transcriber
+
+        s = get_transcriber("cohere_local", {})
+        audio = tmp_path / "fake.opus"
+        audio.write_bytes(b"x")
+        with pytest.raises(NotImplementedError):
+            s.transcribe(audio)
+
+    def test_incomplete_method_preserved_as_reference(self):
+        """The original stub should still be available as _transcribe_incomplete."""
+        from recordo.transcribers.cohere_local import CohereLocalTranscriber
+
+        s = CohereLocalTranscriber({})
+        # Method exists (preserved for future implementation reference)
+        assert hasattr(s, "_transcribe_incomplete")

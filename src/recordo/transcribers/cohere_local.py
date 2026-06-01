@@ -161,6 +161,30 @@ class CohereLocalTranscriber(Transcriber):
         self._model = local_path  # marker
 
     def transcribe(self, audio: Path, *, language: str = "pt") -> TranscriptionResult:
+        """[BLOCKED] CohereLocalTranscriber não está totalmente implementado.
+
+        O decoder autoregressive (token sampling loop) não foi finalizado
+        e produziria transcrições inválidas em produção. A implementação
+        parcial está preservada em `_transcribe_incomplete()` como referência
+        para finalização futura.
+        """
+        raise NotImplementedError(
+            "CohereLocalTranscriber não está totalmente implementado.\n"
+            "O decoder autoregressive (token sampling loop) não foi finalizado, "
+            "e usá-lo produziria transcrições inválidas.\n\n"
+            "Use um destes backends em vez disso:\n"
+            "  - 'cohere'   (API HTTP, SOTA, requer COHERE_API_KEY)\n"
+            "  - 'whisper'  (local, faster-whisper)\n"
+            "  - 'parakeet' (local, NVIDIA NeMo TDT v3)\n\n"
+            "Tracking: https://github.com/caio-hat/recordo/issues"
+        )
+
+    def _transcribe_incomplete(self, audio: Path, *, language: str = "pt") -> TranscriptionResult:
+        """[INCOMPLETO — não usar em produção]
+
+        Implementação parcial preservada como referência para finalização
+        futura do decoder autoregressive. NÃO chame diretamente.
+        """
         self._load_model()
 
         if not shutil.which("ffmpeg"):

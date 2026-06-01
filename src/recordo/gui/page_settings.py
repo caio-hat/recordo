@@ -254,9 +254,7 @@ class SettingsPage(Gtk.ScrolledWindow):
 
         self.parakeet_onnx_row = Adw.SwitchRow(title="Usar ONNX-INT8")
         self.parakeet_onnx_row.set_subtitle("Mais rápido em CPU (requer port ONNX baixado)")
-        self.parakeet_onnx_row.set_active(
-            self.cfg["transcriber"].get("parakeet", {}).get("use_onnx", False)
-        )
+        self.parakeet_onnx_row.set_active(self.cfg["transcriber"].get("parakeet", {}).get("use_onnx", False))
         self._parakeet_group.add(self.parakeet_onnx_row)
 
         # ═════ Cohere group (visível só se backend=cohere) ═════
@@ -315,9 +313,7 @@ class SettingsPage(Gtk.ScrolledWindow):
         sum_group.add(self.sum_backend_row)
 
         # Fallbacks (sempre visíveis no group principal)
-        self.sum_fallback_local_row = Adw.SwitchRow(
-            title="↩ Fallback automático para Ollama se cloud falhar"
-        )
+        self.sum_fallback_local_row = Adw.SwitchRow(title="↩ Fallback automático para Ollama se cloud falhar")
         self.sum_fallback_local_row.set_active(sum_cfg.get("fallback_to_local", True))
         sum_group.add(self.sum_fallback_local_row)
 
