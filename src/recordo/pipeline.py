@@ -26,11 +26,51 @@ PLACEHOLDER = "_(processando — esta seção é preenchida quando o backend ter
 SUMMARY_PLACEHOLDER = "_(resumo será gerado após a transcrição)_"
 TOPICS_PLACEHOLDER = "_(assuntos serão identificados após a transcrição)_"
 
-# Status dict global indexado por target_dir.name. Usado por callers (rerun)
-# pra inspecionar erros assíncronos da thread de transcrição. Não é
-# thread-safe contra múltiplas sessões com mesmo nome — improvável dado
-# o naming "<YYYY-MM-DD>_<safe_subject>".
-_PIPELINE_STATUS: dict[str, dict[str, Any]] = {}
+
+class _PipelineStatusStore:
+    """Thread-safe store for pipeline async status, with size cap (B4).
+
+    Indexed by target_dir.name. Maintains insertion order via dict() in
+    Python 3.7+; clear_old() drops oldest entries beyond `keep_last`.
+    """
+
+    def __init__(self, keep_last: int = 20) -> None:
+        self._data: dict[str, dict[str, Any]] = {}
+        self._lock = threading.RLock()
+        self.keep_last = keep_last
+
+    def set(self, target_name: str, status: dict[str, Any]) -> None:
+        with self._lock:
+            self._data[target_name] = status
+
+    def get(self, target_name: str) -> dict[str, Any]:
+        with self._lock:
+            return dict(self._data.get(target_name, {}))
+
+    def clear_old(self, *, keep_last: int | None = None) -> int:
+        """Drop oldest entries beyond keep_last. Returns # of dropped entries."""
+        n_keep = keep_last if keep_last is not None else self.keep_last
+        with self._lock:
+            if len(self._data) <= n_keep:
+                return 0
+            keys = list(self._data.keys())
+            to_remove = keys[: len(keys) - n_keep]
+            for k in to_remove:
+                del self._data[k]
+            return len(to_remove)
+
+    def size(self) -> int:
+        with self._lock:
+            return len(self._data)
+
+    def clear(self) -> None:
+        """Wipe all entries (test/diagnostic helper)."""
+        with self._lock:
+            self._data.clear()
+
+
+# Singleton store. Replaces the previous global dict.
+_PIPELINE_STATUS_STORE = _PipelineStatusStore(keep_last=20)
 
 
 def _safe_move(src: Path, dst: Path) -> None:
@@ -193,7 +233,7 @@ def post_pipeline(
     # Status dict partilhado pra que callers (ex: rerun-pipeline) possam
     # detectar erros assíncronos via join + check.
     pipeline_status: dict[str, Any] = {}
-    _PIPELINE_STATUS[target_dir.name] = pipeline_status
+    _PIPELINE_STATUS_STORE.set(target_dir.name, pipeline_status)
 
     threading.Thread(
         target=_transcribe_async,
@@ -219,7 +259,101 @@ def get_pipeline_status(target_dir: Path) -> dict[str, Any]:
       'summary_backend' (str): summarizer usado (após fallback)
       'error' (str): mensagem se algo falhou
     """
-    return _PIPELINE_STATUS.get(target_dir.name, {})
+    return _PIPELINE_STATUS_STORE.get(target_dir.name)
+
+
+def _resolve_backend_with_fallback(backend: str, transcriber_cfg: dict[str, Any]) -> str | None:
+    """B13: helper para fallback automático parakeet→whisper.
+
+    Returns the backend to actually use, or None if no usable backend.
+    Side effects: emits notify on fallback, updates transcriber_cfg.
+    """
+    if backend == "parakeet":
+        try:
+            import nemo.collections.asr  # noqa: F401
+        except ImportError:
+            log.warning(
+                "parakeet config'd mas nemo não instalado — "
+                "fallback automático para whisper "
+                "(instale com setup.sh --with-parakeet)"
+            )
+            notify(
+                "⚠ Parakeet indisponível",
+                "Usando Whisper como fallback. Para Parakeet: setup.sh --with-parakeet",
+                urgency="normal",
+            )
+            backend = "whisper"
+            transcriber_cfg.setdefault("whisper", {})
+
+    if backend == "whisper" and not ensure_whisper_installed():
+        notify(
+            "⚠️ Transcrição indisponível",
+            "faster-whisper não instalado. Áudio em ~/Notas/.",
+            urgency="critical",
+        )
+        return None
+
+    return backend
+
+
+def _run_transcription(
+    audio_dst: Path,
+    nota_md: Path,
+    backend: str,
+    transcriber_cfg: dict[str, Any],
+    language: str,
+    marks: list[Mark] | None,
+) -> TranscriptionResult | None:
+    """B13: roda transcrição + escreve transcricao.txt/.srt + atualiza status.
+
+    Returns TranscriptionResult on success, None on transcriber unavailability.
+    Raises on transcribe() failure (caller handles).
+    """
+    actual_backend = _resolve_backend_with_fallback(backend, transcriber_cfg)
+    if actual_backend is None:
+        return None
+
+    transcriber = get_transcriber(actual_backend, transcriber_cfg)
+    result = transcriber.transcribe(audio_dst, language=language)
+    _write_result(audio_dst, nota_md, result, marks=marks)
+    _set_transcription_status(nota_md, "done")
+    return result
+
+
+def _run_topics(
+    result: TranscriptionResult,
+    nota_md: Path,
+    target_dir: Path,
+    subject: str,
+    summarizer_cfg: dict[str, Any],
+) -> str:
+    """B13: extrai e embeda tópicos. Returns backend name used."""
+    from .topics import extract_topics
+
+    topics_result = extract_topics(result, subject=subject, summarizer_cfg=summarizer_cfg)
+    _embed_topics(nota_md, topics_result)
+    _write_topics_json(target_dir, topics_result)
+    return topics_result.backend
+
+
+def _run_summary_step(
+    result: TranscriptionResult,
+    nota_md: Path,
+    target_dir: Path,
+    subject: str,
+    summarizer_cfg: dict[str, Any],
+    language: str,
+) -> str:
+    """B13: gera e embeda resumo. Returns backend name used."""
+    summary = _generate_summary(
+        result.text,
+        subject=subject,
+        summarizer_cfg=summarizer_cfg,
+        language=language,
+    )
+    _embed_summary(nota_md, summary)
+    _write_summary_md(target_dir, summary)
+    return summary.backend
 
 
 def _transcribe_async(
@@ -234,47 +368,20 @@ def _transcribe_async(
     status: dict[str, Any] | None = None,
     marks: list[Mark] | None = None,
 ) -> None:
-    """Worker da thread de transcrição.
+    """Worker thread coordenando transcribe → topics → summary.
 
-    `status` é um dict opcional partilhado com o caller; preenchemos
-    'ok', 'transcriber', 'summary_backend', 'error' pra que o caller
-    (rerun-pipeline) possa propagar erros via exit code.
+    `status` é dict partilhado com caller (preenchemos 'ok', 'transcriber',
+    'summary_backend', 'topics_backend', 'error'). Pipeline status store
+    é limpo (clear_old) ao final para evitar memory growth indefinido (B4).
     """
     if status is None:
         status = {}
     try:
-        # Backend parakeet precisa de nemo — se ausente, fallback automático whisper
-        if backend == "parakeet":
-            try:
-                import nemo.collections.asr  # noqa: F401
-            except ImportError:
-                log.warning(
-                    "parakeet config'd mas nemo não instalado — "
-                    "fallback automático para whisper "
-                    "(instale com setup.sh --with-parakeet)"
-                )
-                notify(
-                    "⚠ Parakeet indisponível",
-                    "Usando Whisper como fallback. Para Parakeet: setup.sh --with-parakeet",
-                    urgency="normal",
-                )
-                backend = "whisper"
-                transcriber_cfg.setdefault("whisper", {})
-
-        # Backend whisper precisa de faster-whisper instalado
-        if backend == "whisper" and not ensure_whisper_installed():
-            status["error"] = "faster-whisper indisponível"
-            notify(
-                "⚠️ Transcrição indisponível",
-                "faster-whisper não instalado. Áudio em ~/Notas/.",
-                urgency="critical",
-            )
+        # Step 1: Transcribe
+        result = _run_transcription(audio_dst, nota_md, backend, transcriber_cfg, language, marks)
+        if result is None:
+            status["error"] = "transcrição indisponível"
             return
-
-        transcriber = get_transcriber(backend, transcriber_cfg)
-        result = transcriber.transcribe(audio_dst, language=language)
-        _write_result(audio_dst, nota_md, result, marks=marks)
-        _set_transcription_status(nota_md, "done")
         status["transcriber"] = result.backend
         notify(
             "✓ Transcrição pronta",
@@ -283,38 +390,30 @@ def _transcribe_async(
             transient=True,
         )
 
-        # Topic segmentation (em paralelo conceitual ao resumo, mas serial)
+        # Step 2: Topics + Summary (only if summarizer configured)
         if summarizer_cfg is not None:
-            from .topics import extract_topics
-
-            topics_result = extract_topics(result, subject=subject, summarizer_cfg=summarizer_cfg)
-            _embed_topics(nota_md, topics_result)
-            _write_topics_json(target_dir, topics_result)
-            status["topics_backend"] = topics_result.backend
-
-        # Gera resumo (não bloqueia transcrição) com fallback Ollama → heuristic
-        if summarizer_cfg is not None:
-            summary = _generate_summary(
-                result.text,
-                subject=subject,
-                summarizer_cfg=summarizer_cfg,
-                language=language,
+            status["topics_backend"] = _run_topics(result, nota_md, target_dir, subject, summarizer_cfg)
+            status["summary_backend"] = _run_summary_step(
+                result, nota_md, target_dir, subject, summarizer_cfg, language
             )
-            _embed_summary(nota_md, summary)
-            _write_summary_md(target_dir, summary)
-            status["summary_backend"] = summary.backend
             notify(
                 "✓ Nota completa",
                 f"~/Notas/{target_dir.name}/",
                 icon="document-edit",
                 transient=True,
             )
+
         status["ok"] = True
     except Exception as e:
         log.exception("falha transcrição/resumo async: %s", e)
         status["error"] = str(e)[:200]
         _set_transcription_status(nota_md, "error")
         notify("⚠️ Erro pipeline", str(e)[:120], urgency="critical")
+    finally:
+        # B4: cap status store size to avoid unbounded growth
+        n_dropped = _PIPELINE_STATUS_STORE.clear_old()
+        if n_dropped:
+            log.debug("pipeline status store: dropped %d old entries", n_dropped)
 
 
 def _generate_summary(
