@@ -191,9 +191,10 @@ class SettingsPage(Gtk.ScrolledWindow):
         wd_group.add(self.reminder_row)
 
     def _build_transcriber_group(self, prefs: Adw.PreferencesPage) -> None:
+        # Group principal: só backend + idioma (sempre visíveis)
         tr_group = Adw.PreferencesGroup(
             title="✍ Transcrição",
-            description="Whisper (local), Parakeet TDT v3 (local NeMo), Cohere (API ou local ONNX).",
+            description="Escolha o backend; abaixo só os campos do backend selecionado aparecem.",
         )
         prefs.add(tr_group)
 
@@ -208,61 +209,94 @@ class SettingsPage(Gtk.ScrolledWindow):
         self.lang_row.set_text(self.cfg["transcriber"]["language"])
         tr_group.add(self.lang_row)
 
-        # === Whisper ===
+        # ═════ Whisper group (visível só se backend=whisper) ═════
+        self._whisper_group = Adw.PreferencesGroup(
+            title="🎙 Whisper",
+            description="faster-whisper local. Para qualidade pt-BR: jlondonobo/whisper-large-v2-pt.",
+        )
+        prefs.add(self._whisper_group)
+
         wh_cfg = self.cfg["transcriber"]["whisper"]
 
-        self.whisper_model_row = Adw.ComboRow(title="Whisper model")
+        self.whisper_model_row = Adw.ComboRow(title="Model")
         self.whisper_model_row.set_model(Gtk.StringList.new(WHISPER_MODELS))
         cur = wh_cfg.get("model", "large-v3-turbo")
         if cur in WHISPER_MODELS:
             self.whisper_model_row.set_selected(WHISPER_MODELS.index(cur))
         else:
-            # Modelo custom não na lista: adiciona dinâmico
             ml = Gtk.StringList.new([*WHISPER_MODELS, cur])
             self.whisper_model_row.set_model(ml)
             self.whisper_model_row.set_selected(len(WHISPER_MODELS))
-        tr_group.add(self.whisper_model_row)
+        self._whisper_group.add(self.whisper_model_row)
 
-        self.whisper_device_row = Adw.ComboRow(title="Whisper device")
+        self.whisper_device_row = Adw.ComboRow(title="Device")
         self.whisper_device_row.set_model(Gtk.StringList.new(DEVICES))
         self.whisper_device_row.set_selected(DEVICES.index(wh_cfg.get("device", "cpu")))
-        tr_group.add(self.whisper_device_row)
+        self._whisper_group.add(self.whisper_device_row)
 
-        self.whisper_compute_row = Adw.ComboRow(title="Whisper compute_type")
+        self.whisper_compute_row = Adw.ComboRow(title="compute_type")
         self.whisper_compute_row.set_model(Gtk.StringList.new(COMPUTE_TYPES))
         ct = wh_cfg.get("compute_type", "int8")
         if ct in COMPUTE_TYPES:
             self.whisper_compute_row.set_selected(COMPUTE_TYPES.index(ct))
-        tr_group.add(self.whisper_compute_row)
+        self._whisper_group.add(self.whisper_compute_row)
 
-        self.whisper_prompt_row = Adw.EntryRow(title="Whisper initial_prompt (biasing técnico pt-BR)")
+        self.whisper_prompt_row = Adw.EntryRow(title="initial_prompt (biasing pt-BR)")
         self.whisper_prompt_row.set_text(wh_cfg.get("initial_prompt", ""))
-        tr_group.add(self.whisper_prompt_row)
+        self._whisper_group.add(self.whisper_prompt_row)
 
-        # === Parakeet ===
-        self.parakeet_onnx_row = Adw.SwitchRow(title="Parakeet — usar ONNX-INT8")
+        # ═════ Parakeet group (visível só se backend=parakeet) ═════
+        self._parakeet_group = Adw.PreferencesGroup(
+            title="🦜 Parakeet TDT v3",
+            description="NVIDIA NeMo, 25 idiomas. Requer GPU CUDA pra performance.",
+        )
+        prefs.add(self._parakeet_group)
+
+        self.parakeet_onnx_row = Adw.SwitchRow(title="Usar ONNX-INT8")
         self.parakeet_onnx_row.set_subtitle("Mais rápido em CPU (requer port ONNX baixado)")
-        self.parakeet_onnx_row.set_active(self.cfg["transcriber"].get("parakeet", {}).get("use_onnx", False))
-        tr_group.add(self.parakeet_onnx_row)
+        self.parakeet_onnx_row.set_active(
+            self.cfg["transcriber"].get("parakeet", {}).get("use_onnx", False)
+        )
+        self._parakeet_group.add(self.parakeet_onnx_row)
 
-        # === Cohere ===
+        # ═════ Cohere group (visível só se backend=cohere) ═════
+        self._cohere_group = Adw.PreferencesGroup(
+            title="🪶 Cohere Transcribe",
+            description="API #1 Open ASR Leaderboard 2026 (WER 5.42%). Get key: dashboard.cohere.com",
+        )
+        prefs.add(self._cohere_group)
+
         co_cfg = self.cfg["transcriber"].get("cohere", {})
 
-        self.cohere_model_row = Adw.EntryRow(title="Cohere model")
+        self.cohere_model_row = Adw.EntryRow(title="Model")
         self.cohere_model_row.set_text(co_cfg.get("model", "cohere-transcribe-03-2026"))
-        tr_group.add(self.cohere_model_row)
+        self._cohere_group.add(self.cohere_model_row)
 
         self.cohere_key_row, self.cohere_key_btn = _make_password_row_with_eye(
-            "Cohere API key (vazio = env COHERE_API_KEY)",
+            "API key (vazio = env COHERE_API_KEY)",
             initial=co_cfg.get("api_key", ""),
         )
-        tr_group.add(self.cohere_key_row)
+        self._cohere_group.add(self.cohere_key_row)
 
-        self.cohere_endpoint_row = Adw.EntryRow(title="Cohere endpoint (override)")
+        self.cohere_endpoint_row = Adw.EntryRow(title="Endpoint (override)")
         self.cohere_endpoint_row.set_text(
             co_cfg.get("endpoint", "https://api.cohere.com/v2/audio/transcriptions")
         )
-        tr_group.add(self.cohere_endpoint_row)
+        self._cohere_group.add(self.cohere_endpoint_row)
+
+        # Ativa visibilidade contextual e conecta sinal
+        self._update_transcriber_visibility()
+        self.tr_backend_row.connect("notify::selected", self._on_transcriber_backend_changed)
+
+    def _on_transcriber_backend_changed(self, *_args) -> None:
+        self._update_transcriber_visibility()
+
+    def _update_transcriber_visibility(self) -> None:
+        """Mostra apenas o group do backend selecionado."""
+        sel = TRANSCRIBE_BACKENDS[self.tr_backend_row.get_selected()]
+        self._whisper_group.set_visible(sel == "whisper")
+        self._parakeet_group.set_visible(sel == "parakeet")
+        self._cohere_group.set_visible(sel == "cohere")
 
     def _build_summarizer_group(self, prefs: Adw.PreferencesPage) -> None:
         sum_group = Adw.PreferencesGroup(
@@ -280,78 +314,9 @@ class SettingsPage(Gtk.ScrolledWindow):
             self.sum_backend_row.set_selected(SUMMARIZER_BACKENDS.index(cur_backend))
         sum_group.add(self.sum_backend_row)
 
-        # Ollama
-        ol_cfg = sum_cfg.get("ollama", {})
-        self.sum_ollama_model_row = Adw.EntryRow(title="Ollama: model")
-        self.sum_ollama_model_row.set_text(ol_cfg.get("model", "gemma2:2b"))
-        sum_group.add(self.sum_ollama_model_row)
-
-        self.sum_ollama_host_row = Adw.EntryRow(
-            title="Ollama: host (local OU servidor remoto)",
-        )
-        self.sum_ollama_host_row.set_text(ol_cfg.get("host", "http://localhost:11434"))
-        sum_group.add(self.sum_ollama_host_row)
-
-        self.sum_ollama_ctx_row = Adw.SpinRow.new_with_range(2048, 131072, 2048)
-        self.sum_ollama_ctx_row.set_title("Ollama: num_ctx (contexto)")
-        self.sum_ollama_ctx_row.set_value(ol_cfg.get("num_ctx", 32768))
-        sum_group.add(self.sum_ollama_ctx_row)
-
-        # Gemini
-        gem_cfg = sum_cfg.get("gemini", {})
-        self.sum_gemini_model_row = Adw.EntryRow(title="Gemini: model")
-        self.sum_gemini_model_row.set_text(gem_cfg.get("model", "gemini-2.5-flash"))
-        sum_group.add(self.sum_gemini_model_row)
-
-        self.sum_gemini_key_row, self.sum_gemini_key_btn = _make_password_row_with_eye(
-            "Gemini: API key (vazio = env GEMINI_API_KEY)",
-            initial=gem_cfg.get("api_key", ""),
-        )
-        sum_group.add(self.sum_gemini_key_row)
-
-        # OpenAI
-        oa_cfg = sum_cfg.get("openai", {})
-        self.sum_openai_model_row = Adw.EntryRow(title="OpenAI: model")
-        self.sum_openai_model_row.set_text(oa_cfg.get("model", "gpt-4o-mini"))
-        sum_group.add(self.sum_openai_model_row)
-
-        self.sum_openai_key_row, self.sum_openai_key_btn = _make_password_row_with_eye(
-            "OpenAI: API key (vazio = env OPENAI_API_KEY)",
-            initial=oa_cfg.get("api_key", ""),
-        )
-        sum_group.add(self.sum_openai_key_row)
-
-        # Anthropic
-        an_cfg = sum_cfg.get("anthropic", {})
-        self.sum_anthropic_model_row = Adw.EntryRow(title="Anthropic: model")
-        self.sum_anthropic_model_row.set_text(an_cfg.get("model", "claude-3-5-haiku-20241022"))
-        sum_group.add(self.sum_anthropic_model_row)
-
-        self.sum_anthropic_key_row, self.sum_anthropic_key_btn = _make_password_row_with_eye(
-            "Anthropic: API key (vazio = env ANTHROPIC_API_KEY)",
-            initial=an_cfg.get("api_key", ""),
-        )
-        sum_group.add(self.sum_anthropic_key_row)
-
-        # OpenAI-compatible (Groq/Together/Fireworks/etc)
-        oc_cfg = sum_cfg.get("openai_compat", {})
-        self.sum_compat_url_row = Adw.EntryRow(title="OpenAI-compat: base_url")
-        self.sum_compat_url_row.set_text(oc_cfg.get("base_url", "https://api.groq.com/openai/v1"))
-        sum_group.add(self.sum_compat_url_row)
-
-        self.sum_compat_model_row = Adw.EntryRow(title="OpenAI-compat: model")
-        self.sum_compat_model_row.set_text(oc_cfg.get("model", "llama-3.3-70b-versatile"))
-        sum_group.add(self.sum_compat_model_row)
-
-        self.sum_compat_key_row, self.sum_compat_key_btn = _make_password_row_with_eye(
-            "OpenAI-compat: API key (env GROQ_API_KEY/TOGETHER_API_KEY/etc)",
-            initial=oc_cfg.get("api_key", ""),
-        )
-        sum_group.add(self.sum_compat_key_row)
-
-        # Fallbacks
+        # Fallbacks (sempre visíveis no group principal)
         self.sum_fallback_local_row = Adw.SwitchRow(
-            title="↩ Fallback automático para Ollama em caso de falha cloud"
+            title="↩ Fallback automático para Ollama se cloud falhar"
         )
         self.sum_fallback_local_row.set_active(sum_cfg.get("fallback_to_local", True))
         sum_group.add(self.sum_fallback_local_row)
@@ -361,6 +326,136 @@ class SettingsPage(Gtk.ScrolledWindow):
         )
         self.sum_fallback_heuristic_row.set_active(sum_cfg.get("fallback_to_heuristic", True))
         sum_group.add(self.sum_fallback_heuristic_row)
+
+        # ═════ Ollama group ═════
+        self._sum_ollama_group = Adw.PreferencesGroup(
+            title="🦙 Ollama (local)",
+            description="LLM local. Suporta servidor remoto (homelab).",
+        )
+        prefs.add(self._sum_ollama_group)
+
+        ol_cfg = sum_cfg.get("ollama", {})
+        self.sum_ollama_model_row = Adw.EntryRow(title="Model (ex: gemma4:e2b)")
+        self.sum_ollama_model_row.set_text(ol_cfg.get("model", "gemma2:2b"))
+        self._sum_ollama_group.add(self.sum_ollama_model_row)
+
+        self.sum_ollama_host_row = Adw.EntryRow(title="Host (local ou remoto)")
+        self.sum_ollama_host_row.set_text(ol_cfg.get("host", "http://localhost:11434"))
+        self._sum_ollama_group.add(self.sum_ollama_host_row)
+
+        self.sum_ollama_ctx_row = Adw.SpinRow.new_with_range(2048, 131072, 2048)
+        self.sum_ollama_ctx_row.set_title("num_ctx (contexto em tokens)")
+        self.sum_ollama_ctx_row.set_value(ol_cfg.get("num_ctx", 32768))
+        self._sum_ollama_group.add(self.sum_ollama_ctx_row)
+
+        # ═════ Gemini group ═════
+        self._sum_gemini_group = Adw.PreferencesGroup(
+            title="✨ Google Gemini",
+            description="Get key: aistudio.google.com/apikey",
+        )
+        prefs.add(self._sum_gemini_group)
+
+        gem_cfg = sum_cfg.get("gemini", {})
+        self.sum_gemini_model_row = Adw.EntryRow(title="Model (ex: gemini-2.5-flash)")
+        self.sum_gemini_model_row.set_text(gem_cfg.get("model", "gemini-2.5-flash"))
+        self._sum_gemini_group.add(self.sum_gemini_model_row)
+
+        self.sum_gemini_key_row, self.sum_gemini_key_btn = _make_password_row_with_eye(
+            "API key (vazio = env GEMINI_API_KEY)",
+            initial=gem_cfg.get("api_key", ""),
+        )
+        self._sum_gemini_group.add(self.sum_gemini_key_row)
+
+        # ═════ OpenAI group ═════
+        self._sum_openai_group = Adw.PreferencesGroup(
+            title="🤖 OpenAI",
+            description="Get key: platform.openai.com/api-keys",
+        )
+        prefs.add(self._sum_openai_group)
+
+        oa_cfg = sum_cfg.get("openai", {})
+        self.sum_openai_model_row = Adw.EntryRow(title="Model (ex: gpt-4o-mini)")
+        self.sum_openai_model_row.set_text(oa_cfg.get("model", "gpt-4o-mini"))
+        self._sum_openai_group.add(self.sum_openai_model_row)
+
+        self.sum_openai_key_row, self.sum_openai_key_btn = _make_password_row_with_eye(
+            "API key (vazio = env OPENAI_API_KEY)",
+            initial=oa_cfg.get("api_key", ""),
+        )
+        self._sum_openai_group.add(self.sum_openai_key_row)
+
+        # ═════ Anthropic group ═════
+        self._sum_anthropic_group = Adw.PreferencesGroup(
+            title="🧠 Anthropic Claude",
+            description="Get key: console.anthropic.com",
+        )
+        prefs.add(self._sum_anthropic_group)
+
+        an_cfg = sum_cfg.get("anthropic", {})
+        self.sum_anthropic_model_row = Adw.EntryRow(title="Model (ex: claude-3-5-haiku-20241022)")
+        self.sum_anthropic_model_row.set_text(an_cfg.get("model", "claude-3-5-haiku-20241022"))
+        self._sum_anthropic_group.add(self.sum_anthropic_model_row)
+
+        self.sum_anthropic_key_row, self.sum_anthropic_key_btn = _make_password_row_with_eye(
+            "API key (vazio = env ANTHROPIC_API_KEY)",
+            initial=an_cfg.get("api_key", ""),
+        )
+        self._sum_anthropic_group.add(self.sum_anthropic_key_row)
+
+        # ═════ OpenAI-compatible group (Groq/Together/etc) ═════
+        self._sum_compat_group = Adw.PreferencesGroup(
+            title="⚡ OpenAI-compatível (Groq, Together, OpenRouter, LM Studio)",
+            description="Qualquer provider que implementa /v1/chat/completions. Mude base_url.",
+        )
+        prefs.add(self._sum_compat_group)
+
+        oc_cfg = sum_cfg.get("openai_compat", {})
+        self.sum_compat_url_row = Adw.EntryRow(title="base_url")
+        self.sum_compat_url_row.set_text(oc_cfg.get("base_url", "https://api.groq.com/openai/v1"))
+        self._sum_compat_group.add(self.sum_compat_url_row)
+
+        self.sum_compat_model_row = Adw.EntryRow(title="Model (ex: llama-3.3-70b-versatile)")
+        self.sum_compat_model_row.set_text(oc_cfg.get("model", "llama-3.3-70b-versatile"))
+        self._sum_compat_group.add(self.sum_compat_model_row)
+
+        self.sum_compat_key_row, self.sum_compat_key_btn = _make_password_row_with_eye(
+            "API key (env GROQ_API_KEY ou similar)",
+            initial=oc_cfg.get("api_key", ""),
+        )
+        self._sum_compat_group.add(self.sum_compat_key_row)
+
+        # ═════ Azure group ═════
+        self._sum_azure_group = Adw.PreferencesGroup(
+            title="☁ Azure OpenAI",
+            description="Deployment-based path + api-version.",
+        )
+        prefs.add(self._sum_azure_group)
+
+        az_cfg = sum_cfg.get("azure_openai", {})
+        self.sum_azure_endpoint_row = Adw.EntryRow(title="Endpoint (ex: https://your.openai.azure.com)")
+        self.sum_azure_endpoint_row.set_text(az_cfg.get("endpoint", ""))
+        self._sum_azure_group.add(self.sum_azure_endpoint_row)
+
+        self.sum_azure_deployment_row = Adw.EntryRow(title="Deployment name")
+        self.sum_azure_deployment_row.set_text(az_cfg.get("deployment", ""))
+        self._sum_azure_group.add(self.sum_azure_deployment_row)
+
+        self.sum_azure_version_row = Adw.EntryRow(title="api-version (ex: 2024-08-01-preview)")
+        self.sum_azure_version_row.set_text(az_cfg.get("api_version", "2024-08-01-preview"))
+        self._sum_azure_group.add(self.sum_azure_version_row)
+
+        self.sum_azure_key_row, self.sum_azure_key_btn = _make_password_row_with_eye(
+            "API key (vazio = env AZURE_OPENAI_API_KEY)",
+            initial=az_cfg.get("api_key", ""),
+        )
+        self._sum_azure_group.add(self.sum_azure_key_row)
+
+        # ═════ Heuristic info group ═════
+        self._sum_heuristic_group = Adw.PreferencesGroup(
+            title="🔤 Heurístico (TextRank-like)",
+            description="Sem deps. Resumo via top-N sentenças por TF de palavras-chave. Sem API key.",
+        )
+        prefs.add(self._sum_heuristic_group)
 
         # Botão de teste
         test_box = Gtk.Box(
@@ -379,11 +474,28 @@ class SettingsPage(Gtk.ScrolledWindow):
         self.sum_test_status.add_css_class("dim-label")
         test_box.append(self.sum_test_status)
 
-        # PreferencesRow não aceita box diretamente; embutimos em ListBoxRow
         wrap_row = Adw.PreferencesRow()
         wrap_row.set_child(test_box)
         wrap_row.set_activatable(False)
         sum_group.add(wrap_row)
+
+        # Aplica visibilidade contextual + conecta sinal
+        self._update_summarizer_visibility()
+        self.sum_backend_row.connect("notify::selected", self._on_summarizer_backend_changed)
+
+    def _on_summarizer_backend_changed(self, *_args) -> None:
+        self._update_summarizer_visibility()
+
+    def _update_summarizer_visibility(self) -> None:
+        """Mostra apenas o group do provider selecionado."""
+        sel = SUMMARIZER_BACKENDS[self.sum_backend_row.get_selected()]
+        self._sum_ollama_group.set_visible(sel == "ollama")
+        self._sum_gemini_group.set_visible(sel == "gemini")
+        self._sum_openai_group.set_visible(sel == "openai")
+        self._sum_anthropic_group.set_visible(sel == "anthropic")
+        self._sum_compat_group.set_visible(sel == "openai_compat")
+        self._sum_azure_group.set_visible(sel == "azure_openai")
+        self._sum_heuristic_group.set_visible(sel == "heuristic")
 
     def _build_autodetect_group(self, prefs: Adw.PreferencesPage) -> None:
         ad_group = Adw.PreferencesGroup(
