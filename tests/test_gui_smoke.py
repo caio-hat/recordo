@@ -122,32 +122,18 @@ def test_settings_summarizer_contextual_visibility():
 
 
 @pytest.mark.gui
-def test_password_helper_walks_dom_correctly():
-    """B2 regression: _set_visibility encontra Gtk.Text interno do EntryRow."""
-    from gi.repository import Gtk
+def test_password_row_native_adw():
+    """B2 regression: _make_password_row retorna Adw.PasswordEntryRow nativo."""
+    from gi.repository import Adw
 
-    from recordo.gui.page_settings import _make_password_row_with_eye, _set_visibility
+    from recordo.gui.page_settings import _make_password_row
 
-    row, _btn = _make_password_row_with_eye("Test", initial="secret")
-    # Inicial: invisível (password masked)
-    # Toggle visible
-    _set_visibility(row, visible=True)
-    # Walk encontrar Gtk.Text e validar visibility True
-    found_text = False
-
-    def _find_text(widget):
-        nonlocal found_text
-        if isinstance(widget, Gtk.Text):
-            found_text = True
-            assert widget.get_visibility() is True
-            return
-        child = widget.get_first_child() if hasattr(widget, "get_first_child") else None
-        while child is not None:
-            _find_text(child)
-            child = child.get_next_sibling() if hasattr(child, "get_next_sibling") else None
-
-    _find_text(row)
-    assert found_text, "Gtk.Text interno não encontrado no Adw.EntryRow"
+    row = _make_password_row("Test API key", initial="secret")
+    assert isinstance(row, Adw.PasswordEntryRow), (
+        f"esperado Adw.PasswordEntryRow nativo, recebeu {type(row).__name__}"
+    )
+    assert row.get_text() == "secret"
+    # Native PasswordEntryRow has built-in eye toggle button — no need to walk DOM
 
 
 @pytest.mark.gui

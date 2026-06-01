@@ -47,70 +47,16 @@ SUMMARIZER_BACKENDS = [
 ]
 
 
-def _make_password_row_with_eye(
-    title: str, subtitle: str = "", initial: str = ""
-) -> tuple[Adw.EntryRow, Gtk.Button]:
-    """Cria EntryRow visualmente como password (com botão olho toggle).
+def _make_password_row(title: str, initial: str = "") -> Adw.PasswordEntryRow:
+    """Cria Adw.PasswordEntryRow nativo (libadwaita 1.4+).
 
-    Não usa Adw.PasswordEntryRow direto pra ter controle do botão eye e funcionar
-    em libadwaita variável. Retorna (entry, button) — caller adiciona ao group.
+    Inclui botão eye built-in com ícone do tema atual. Mais robusto que
+    walks DOM no Gtk.Text interno do EntryRow (que era a abordagem antiga).
     """
-    row = Adw.EntryRow(title=title)
-    if subtitle:
-        # Adw.EntryRow não suporta subtitle nativamente — pulamos
-        pass
-    row.set_text(initial)
-    # Configura como password
-    row.set_property("input-purpose", Gtk.InputPurpose.PASSWORD)
-    # Maximum visibility false (Gtk Entry property pra hide)
-    # Adw.EntryRow não expõe diretamente; usa property name
-    try:
-        row.props.input_purpose = Gtk.InputPurpose.PASSWORD
-    except Exception:
-        pass
-    # Inicialmente esconde caracteres via setting da entry interna
-    _set_visibility(row, visible=False)
-
-    # Botão eye (suffix)
-    btn = Gtk.Button.new_from_icon_name("view-conceal-symbolic")
-    btn.set_valign(Gtk.Align.CENTER)
-    btn.add_css_class("flat")
-    btn.set_tooltip_text("Mostrar/ocultar")
-
-    # Estado de visibilidade no botão
-    btn._visible = False  # type: ignore[attr-defined]
-
-    def _toggle(_b: Gtk.Button) -> None:
-        new = not btn._visible  # type: ignore[attr-defined]
-        btn._visible = new  # type: ignore[attr-defined]
-        _set_visibility(row, visible=new)
-        btn.set_icon_name("view-reveal-symbolic" if new else "view-conceal-symbolic")
-
-    btn.connect("clicked", _toggle)
-    row.add_suffix(btn)
-    return row, btn
-
-
-def _set_visibility(entry_row: Adw.EntryRow, *, visible: bool) -> None:
-    """Toggle text visibility do Adw.EntryRow.
-
-    Adw.EntryRow encapsula Gtk.Text internamente. Mexemos via property
-    'visibility' do Gtk.Text.
-    """
-    # Walk children pra achar Gtk.Text
-    child = entry_row.get_first_child()
-    while child is not None:
-        if isinstance(child, Gtk.Text):
-            child.set_visibility(visible)
-            return
-        # Descer mais um nível
-        sub = child.get_first_child() if hasattr(child, "get_first_child") else None
-        while sub is not None:
-            if isinstance(sub, Gtk.Text):
-                sub.set_visibility(visible)
-                return
-            sub = sub.get_next_sibling() if hasattr(sub, "get_next_sibling") else None
-        child = child.get_next_sibling()
+    row = Adw.PasswordEntryRow(title=title)
+    if initial:
+        row.set_text(initial)
+    return row
 
 
 class SettingsPage(Gtk.ScrolledWindow):
@@ -270,7 +216,7 @@ class SettingsPage(Gtk.ScrolledWindow):
         self.cohere_model_row.set_text(co_cfg.get("model", "cohere-transcribe-03-2026"))
         self._cohere_group.add(self.cohere_model_row)
 
-        self.cohere_key_row, self.cohere_key_btn = _make_password_row_with_eye(
+        self.cohere_key_row = _make_password_row(
             "API key (vazio = env COHERE_API_KEY)",
             initial=co_cfg.get("api_key", ""),
         )
@@ -356,7 +302,7 @@ class SettingsPage(Gtk.ScrolledWindow):
         self.sum_gemini_model_row.set_text(gem_cfg.get("model", "gemini-2.5-flash"))
         self._sum_gemini_group.add(self.sum_gemini_model_row)
 
-        self.sum_gemini_key_row, self.sum_gemini_key_btn = _make_password_row_with_eye(
+        self.sum_gemini_key_row = _make_password_row(
             "API key (vazio = env GEMINI_API_KEY)",
             initial=gem_cfg.get("api_key", ""),
         )
@@ -374,7 +320,7 @@ class SettingsPage(Gtk.ScrolledWindow):
         self.sum_openai_model_row.set_text(oa_cfg.get("model", "gpt-4o-mini"))
         self._sum_openai_group.add(self.sum_openai_model_row)
 
-        self.sum_openai_key_row, self.sum_openai_key_btn = _make_password_row_with_eye(
+        self.sum_openai_key_row = _make_password_row(
             "API key (vazio = env OPENAI_API_KEY)",
             initial=oa_cfg.get("api_key", ""),
         )
@@ -392,7 +338,7 @@ class SettingsPage(Gtk.ScrolledWindow):
         self.sum_anthropic_model_row.set_text(an_cfg.get("model", "claude-3-5-haiku-20241022"))
         self._sum_anthropic_group.add(self.sum_anthropic_model_row)
 
-        self.sum_anthropic_key_row, self.sum_anthropic_key_btn = _make_password_row_with_eye(
+        self.sum_anthropic_key_row = _make_password_row(
             "API key (vazio = env ANTHROPIC_API_KEY)",
             initial=an_cfg.get("api_key", ""),
         )
@@ -414,7 +360,7 @@ class SettingsPage(Gtk.ScrolledWindow):
         self.sum_compat_model_row.set_text(oc_cfg.get("model", "llama-3.3-70b-versatile"))
         self._sum_compat_group.add(self.sum_compat_model_row)
 
-        self.sum_compat_key_row, self.sum_compat_key_btn = _make_password_row_with_eye(
+        self.sum_compat_key_row = _make_password_row(
             "API key (env GROQ_API_KEY ou similar)",
             initial=oc_cfg.get("api_key", ""),
         )
@@ -440,7 +386,7 @@ class SettingsPage(Gtk.ScrolledWindow):
         self.sum_azure_version_row.set_text(az_cfg.get("api_version", "2024-08-01-preview"))
         self._sum_azure_group.add(self.sum_azure_version_row)
 
-        self.sum_azure_key_row, self.sum_azure_key_btn = _make_password_row_with_eye(
+        self.sum_azure_key_row = _make_password_row(
             "API key (vazio = env AZURE_OPENAI_API_KEY)",
             initial=az_cfg.get("api_key", ""),
         )
