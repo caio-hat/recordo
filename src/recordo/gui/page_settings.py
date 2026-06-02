@@ -47,6 +47,22 @@ SUMMARIZER_BACKENDS = [
 ]
 
 
+class _TextViewBufferProxy:
+    """B1: Proxy para Gtk.TextView que expõe API .get_text() / .set_text()
+    compatível com Adw.EntryRow (para reuso de código de save/load)."""
+
+    def __init__(self, textview: Gtk.TextView):
+        self._textview = textview
+
+    def get_text(self) -> str:
+        buf = self._textview.get_buffer()
+        start, end = buf.get_bounds()
+        return buf.get_text(start, end, True)
+
+    def set_text(self, value: str) -> None:
+        self._textview.get_buffer().set_text(value or "", -1)
+
+
 def _make_password_row(title: str, initial: str = "") -> Adw.PasswordEntryRow:
     """Cria Adw.PasswordEntryRow nativo (libadwaita 1.4+).
 
@@ -106,21 +122,38 @@ class SettingsPage(Gtk.ScrolledWindow):
 
         self.bitrate_row = Adw.EntryRow(title="Bitrate Opus")
         self.bitrate_row.set_text(self.cfg["recording"]["bitrate"])
+        self.bitrate_row.set_tooltip_text(
+            "Bitrate do codec Opus. Padrão 32k é ideal para fala (qualidade boa, "
+            "arquivo pequeno ~10MB/h). Aumente para 64k+ se quiser melhor qualidade."
+        )
         rec_group.add(self.bitrate_row)
 
         self.layout_row = Adw.ComboRow(title="Layout (mic/sys)")
         self.layout_row.set_model(Gtk.StringList.new(LAYOUTS))
         self.layout_row.set_selected(LAYOUTS.index(self.cfg["recording"]["layout"]))
+        self.layout_row.set_tooltip_text(
+            "merge: mistura mic + sistema em estéreo (recomendado, 1 arquivo). "
+            "split: arquivos separados para mic e sistema (debug ou edição posterior)."
+        )
         rec_group.add(self.layout_row)
 
         self.max_seg_row = Adw.SpinRow.new_with_range(60, 7200, 60)
         self.max_seg_row.set_title("Máx segmento (s)")
+        self.max_seg_row.set_subtitle("Tamanho de cada chunk antes de rotacionar (segurança contra crash)")
         self.max_seg_row.set_value(self.cfg["recording"]["max_segment"])
+        self.max_seg_row.set_tooltip_text(
+            "Gravação é dividida em segmentos. Se o ffmpeg crashar, perdemos só "
+            "o segmento ativo, não toda a sessão. Default 1800s (30min)."
+        )
         rec_group.add(self.max_seg_row)
 
         self.hard_cap_row = Adw.SpinRow.new_with_range(600, 28800, 600)
         self.hard_cap_row.set_title("Hard cap sessão (s)")
+        self.hard_cap_row.set_subtitle("Limite máximo absoluto da gravação")
         self.hard_cap_row.set_value(self.cfg["recording"]["hard_cap_seconds"])
+        self.hard_cap_row.set_tooltip_text(
+            "Após esse tempo, gravação para sozinha. Proteção contra esquecer. Default 14400s = 4h."
+        )
         rec_group.add(self.hard_cap_row)
 
     def _build_watchdog_group(self, prefs: Adw.PreferencesPage) -> None:
@@ -196,18 +229,72 @@ class SettingsPage(Gtk.ScrolledWindow):
         self.whisper_device_row = Adw.ComboRow(title="Device")
         self.whisper_device_row.set_model(Gtk.StringList.new(DEVICES))
         self.whisper_device_row.set_selected(DEVICES.index(wh_cfg.get("device", "cpu")))
+        self.whisper_device_row.set_tooltip_text(
+            "cpu = roda em CPU (universal). cuda = NVIDIA GPU (10x+ mais rápido). "
+            "auto = escolhe automaticamente."
+        )
         self._whisper_group.add(self.whisper_device_row)
 
+        # B1: compute_type com tooltip detalhado
         self.whisper_compute_row = Adw.ComboRow(title="compute_type")
+        self.whisper_compute_row.set_subtitle("Precisão do modelo. int8 é o padrão (rápido, qualidade boa).")
         self.whisper_compute_row.set_model(Gtk.StringList.new(COMPUTE_TYPES))
         ct = wh_cfg.get("compute_type", "int8")
         if ct in COMPUTE_TYPES:
             self.whisper_compute_row.set_selected(COMPUTE_TYPES.index(ct))
+        self.whisper_compute_row.set_tooltip_text(
+            "float16: precisão alta, requer GPU.\n"
+            "int8_float16: GPU rápida com baixa perda.\n"
+            "int8: padrão CPU, melhor velocidade/qualidade.\n"
+            "float32: precisão máxima, mais lento.\n"
+            "int16: meio termo precisão/velocidade."
+        )
         self._whisper_group.add(self.whisper_compute_row)
 
-        self.whisper_prompt_row = Adw.EntryRow(title="initial_prompt (biasing pt-BR)")
-        self.whisper_prompt_row.set_text(wh_cfg.get("initial_prompt", ""))
-        self._whisper_group.add(self.whisper_prompt_row)
+        # B1: initial_prompt como TextView multi-line em ActionRow
+        prompt_row = Adw.ActionRow(
+            title="Initial prompt (biasing)",
+            subtitle="Texto livre para guiar a transcrição (termos técnicos, nomes próprios). Suporta múltiplas linhas.",
+        )
+        prompt_row.set_tooltip_text(
+            "Adicione termos comuns do seu domínio (ex: 'reunião sobre Datadog, Kubernetes...') "
+            "para reduzir 10-30% WER em áudios técnicos. Pode ter várias linhas."
+        )
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_size_request(-1, 100)  # 100px alto
+        scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_hexpand(True)
+        scrolled.set_margin_top(8)
+        scrolled.set_margin_bottom(8)
+        scrolled.add_css_class("card")
+
+        self.whisper_prompt_textview = Gtk.TextView()
+        self.whisper_prompt_textview.set_wrap_mode(Gtk.WrapMode.WORD)
+        self.whisper_prompt_textview.set_top_margin(6)
+        self.whisper_prompt_textview.set_bottom_margin(6)
+        self.whisper_prompt_textview.set_left_margin(8)
+        self.whisper_prompt_textview.set_right_margin(8)
+        buf = self.whisper_prompt_textview.get_buffer()
+        buf.set_text(wh_cfg.get("initial_prompt", ""), -1)
+        scrolled.set_child(self.whisper_prompt_textview)
+
+        # ActionRow content area: empilha o ScrolledWindow abaixo
+        # Workaround: usa Adw.PreferencesRow direto via Box
+        prompt_box_outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        prompt_box_outer.append(prompt_row)
+        prompt_box_outer.append(scrolled)
+        # Como Adw.PreferencesGroup só aceita ActionRow/SwitchRow/etc, vamos
+        # usar set_child diretamente no group via add() do prompt_row primeiro,
+        # depois um group separado pro scrolled
+        self._whisper_group.add(prompt_row)
+        # Criar group separado pra TextView (rolavel)
+        self._whisper_prompt_group = Adw.PreferencesGroup()
+        self._whisper_prompt_group.add(scrolled)
+        prefs.add(self._whisper_prompt_group)
+
+        # Para compatibilidade com código antigo que lia .get_text(), expomos
+        # um proxy property
+        self.whisper_prompt_row = _TextViewBufferProxy(self.whisper_prompt_textview)
 
         # ═════ Parakeet group (visível só se backend=parakeet) ═════
         self._parakeet_group = Adw.PreferencesGroup(
@@ -257,6 +344,7 @@ class SettingsPage(Gtk.ScrolledWindow):
         """Mostra apenas o group do backend selecionado."""
         sel = TRANSCRIBE_BACKENDS[self.tr_backend_row.get_selected()]
         self._whisper_group.set_visible(sel == "whisper")
+        self._whisper_prompt_group.set_visible(sel == "whisper")
         self._parakeet_group.set_visible(sel == "parakeet")
         self._cohere_group.set_visible(sel == "cohere")
 
@@ -564,18 +652,38 @@ class SettingsPage(Gtk.ScrolledWindow):
         prefs.add(ad_group)
 
         self.ad_enabled_row = Adw.SwitchRow(title="Habilitado")
+        self.ad_enabled_row.set_subtitle("Detecção automática de chamadas via PulseAudio")
         self.ad_enabled_row.set_active(self.cfg["auto_detect"]["enabled"])
+        self.ad_enabled_row.set_tooltip_text(
+            "Quando ligado, daemon monitora apps de reunião (Teams/Zoom/Slack/Discord/Chrome/Firefox) "
+            "e inicia gravação automaticamente quando detecta uso prolongado do mic."
+        )
         ad_group.add(self.ad_enabled_row)
 
         self.ad_min_dur_row = Adw.SpinRow.new_with_range(1, 60, 1)
         self.ad_min_dur_row.set_title("Min duração mic (s)")
+        self.ad_min_dur_row.set_subtitle("Tempo mínimo de uso contínuo do mic antes de auto-iniciar")
         self.ad_min_dur_row.set_value(self.cfg["auto_detect"]["min_mic_duration_seconds"])
         ad_group.add(self.ad_min_dur_row)
 
         self.ad_quiet_row = Adw.SpinRow.new_with_range(0, 60, 1)
         self.ad_quiet_row.set_title("Quiet period após stop (min)")
+        self.ad_quiet_row.set_subtitle("Não auto-iniciar nova gravação por X min após parar uma")
         self.ad_quiet_row.set_value(self.cfg["auto_detect"]["quiet_period_after_stop_minutes"])
         ad_group.add(self.ad_quiet_row)
+
+        # B2: popup persistente
+        self.ad_popup_persistent_row = Adw.SwitchRow(title="Popup persistente em silêncio")
+        self.ad_popup_persistent_row.set_subtitle(
+            "Em silêncio prolongado, exibe popup com ação 'Parar' em vez de parar automaticamente. "
+            "Útil para reuniões onde você está só escutando (mute prolongado)."
+        )
+        self.ad_popup_persistent_row.set_active(self.cfg["auto_detect"].get("popup_persistent", True))
+        self.ad_popup_persistent_row.set_tooltip_text(
+            "Ligado: gravação só para se você clicar 'Parar' no popup. Mais seguro para reuniões "
+            "longas onde você está mute. Desligado: behavior antigo, para automaticamente."
+        )
+        ad_group.add(self.ad_popup_persistent_row)
 
     # ── Save ───────────────────────────────────────────────────────────────
     def _on_save(self, _btn) -> None:
@@ -641,6 +749,7 @@ class SettingsPage(Gtk.ScrolledWindow):
             self.cfg["auto_detect"]["enabled"] = self.ad_enabled_row.get_active()
             self.cfg["auto_detect"]["min_mic_duration_seconds"] = int(self.ad_min_dur_row.get_value())
             self.cfg["auto_detect"]["quiet_period_after_stop_minutes"] = int(self.ad_quiet_row.get_value())
+            self.cfg["auto_detect"]["popup_persistent"] = self.ad_popup_persistent_row.get_active()
 
             # Pipeline (A2)
             pp = self.cfg.setdefault("pipeline", {})
@@ -705,7 +814,25 @@ class SettingsPage(Gtk.ScrolledWindow):
         self.btn_test_llm.set_sensitive(False)
         self.sum_test_status.set_markup(f"<i>Testando {backend}…</i>")
 
+        # B1: capturar URL/host testado para mostrar no dialog
+        test_target = ""
+        if backend == "ollama":
+            test_target = provider_cfg["ollama"]["host"]
+        elif backend == "openai_compat":
+            test_target = provider_cfg["openai_compat"]["base_url"]
+        elif backend == "gemini":
+            test_target = "https://generativelanguage.googleapis.com (Gemini API)"
+        elif backend == "openai":
+            test_target = "https://api.openai.com/v1"
+        elif backend == "anthropic":
+            test_target = "https://api.anthropic.com"
+        else:
+            test_target = "(local)"
+
         def worker() -> None:
+            import time as _time
+
+            t_start = _time.monotonic()
             try:
                 summ = get_summarizer(backend, provider_cfg)
                 test_text = (
@@ -713,17 +840,39 @@ class SettingsPage(Gtk.ScrolledWindow):
                     "responde corretamente. Decidimos testar a integração."
                 )
                 result = summ.summarize(test_text, language="pt", subject="Teste")
+                latency_ms = int((_time.monotonic() - t_start) * 1000)
                 if result.error:
-                    GLib.idle_add(self._on_test_done, False, f"Falhou: {result.error}")
+                    GLib.idle_add(
+                        self._on_test_done_detailed,
+                        False,
+                        backend,
+                        test_target,
+                        result.error,
+                        latency_ms,
+                        "",
+                    )
                 else:
                     GLib.idle_add(
-                        self._on_test_done,
+                        self._on_test_done_detailed,
                         True,
-                        f"OK — {result.backend}",
+                        backend,
+                        test_target,
+                        "",
+                        latency_ms,
+                        result.resumo[:300] if result.resumo else "(sem resumo retornado)",
                     )
             except Exception as e:
+                latency_ms = int((_time.monotonic() - t_start) * 1000)
                 log.exception("test_llm falhou")
-                GLib.idle_add(self._on_test_done, False, f"Erro: {e}")
+                GLib.idle_add(
+                    self._on_test_done_detailed,
+                    False,
+                    backend,
+                    test_target,
+                    str(e),
+                    latency_ms,
+                    "",
+                )
 
         threading.Thread(target=worker, daemon=True, name="recordo-gui-test-llm").start()
 
@@ -734,4 +883,48 @@ class SettingsPage(Gtk.ScrolledWindow):
         icon = "✅" if ok else "❌"
         self.sum_test_status.set_markup(f"{icon} {msg}")
         self.window.toast(f"{icon} {msg}")
+        return GLib.SOURCE_REMOVE
+
+    def _on_test_done_detailed(
+        self,
+        ok: bool,
+        backend: str,
+        test_target: str,
+        error_msg: str,
+        latency_ms: int,
+        sample_response: str,
+    ) -> bool:
+        """B1: mostra dialog com detalhes do teste (servidor/modelo/latência/payload)."""
+        from gi.repository import GLib
+
+        self.btn_test_llm.set_sensitive(True)
+        icon = "✅" if ok else "❌"
+        short = "Conexão OK" if ok else f"Falhou: {error_msg[:50]}"
+        self.sum_test_status.set_markup(f"{icon} {short}")
+
+        # Build detailed dialog
+        title = f"{icon} Teste {backend.upper()} {'concluído' if ok else 'FALHOU'}"
+
+        body_lines = [
+            f"**Servidor/Endpoint testado:** {test_target}",
+            f"**Backend:** {backend}",
+            f"**Latência total:** {latency_ms} ms",
+        ]
+        if ok:
+            body_lines.append("**Status:** ✓ Provider respondeu corretamente")
+            if sample_response:
+                body_lines.append(f"\n**Resposta sample (primeiros 300 chars):**\n{sample_response}")
+        else:
+            body_lines.append("**Status:** ✗ Erro")
+            body_lines.append(f"**Mensagem:** {error_msg[:500]}")
+
+        body = "\n\n".join(body_lines)
+
+        dlg = Adw.MessageDialog.new(self.window, title, body)
+        dlg.add_response("close", "Fechar")
+        dlg.set_default_response("close")
+        dlg.set_close_response("close")
+        dlg.present()
+
+        self.window.toast(f"{icon} {short}")
         return GLib.SOURCE_REMOVE
