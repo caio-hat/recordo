@@ -51,7 +51,10 @@ class ParakeetTranscriber(Transcriber):
         """Converte qualquer formato pra wav 16kHz mono se necessário."""
         if audio.suffix == ".wav":
             # ainda pode não estar em 16k mono; convertemos sempre por segurança
-            pass
+            log.warning(
+                "audio já é .wav mas convertemos pra 16kHz mono mesmo assim "
+                "(Parakeet exige formato fixo) — overhead inevitável"
+            )
         if not shutil.which("ffmpeg"):
             raise RuntimeError("ffmpeg necessário pra Parakeet (conversão pra 16kHz wav)")
 

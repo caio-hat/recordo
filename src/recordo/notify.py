@@ -26,8 +26,8 @@ def notify(
     if replace and NOTIF_FILE.exists():
         try:
             cmd += ["-r", NOTIF_FILE.read_text().strip()]
-        except Exception:
-            pass
+        except OSError as e:  # B20: log explícito em vez de bare pass
+            log.debug("notify replace-id read falhou: %s", e)
     cmd += [title, body]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=3)

@@ -225,6 +225,44 @@ class TestWhisperImprovements:
         assert s.condition_on_previous_text is True
         assert s.no_speech_threshold == 0.3
 
+    def test_condition_on_previous_text_passed_to_model(self, tmp_path, monkeypatch):
+        """B19 regression: garantir que condition_on_previous_text=False (default)
+        é efetivamente passado para faster_whisper.WhisperModel.transcribe.
+
+        Anti-hallucination crítica para reuniões longas — evita que segmento N+1
+        seja contaminado por hallucinations do segmento N.
+        """
+        from recordo.transcribers.whisper import WhisperTranscriber
+
+        # Captura kwargs do model.transcribe
+        captured: dict = {}
+
+        class FakeInfo:
+            language = "pt"
+            language_probability = 0.99
+
+        class FakeModel:
+            def transcribe(self, audio_path, **kwargs):
+                captured.update(kwargs)
+                return iter([]), FakeInfo()
+
+        # Bypass do _load_model
+        s = WhisperTranscriber({})
+        monkeypatch.setattr(s, "_load_model", lambda: FakeModel())
+
+        audio = tmp_path / "fake.opus"
+        audio.write_bytes(b"x")
+        s.transcribe(audio, language="pt")
+
+        assert "condition_on_previous_text" in captured
+        assert captured["condition_on_previous_text"] is False, (
+            "B19 regression: default deve ser False para evitar hallucinations"
+        )
+        # Outros guards também passados
+        assert captured["compression_ratio_threshold"] == 2.4
+        assert captured["log_prob_threshold"] == -1.0
+        assert captured["no_speech_threshold"] == 0.6
+
 
 class TestCohereLocalBlocked:
     """B7 regression: cohere_local must raise NotImplementedError."""

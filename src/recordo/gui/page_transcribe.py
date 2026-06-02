@@ -131,14 +131,18 @@ class TranscribePage(Gtk.Box):
         self.append(info_card)
 
     def _on_open_settings(self, _btn) -> None:
-        """Navega para a página Configurações na sidebar."""
-        # window.listbox é o sidebar listbox; index 3 é "Configurações"
+        """Navega para a página Configurações na sidebar (B10: navegação por tag)."""
         try:
-            row = self.window.listbox.get_row_at_index(3)
-            if row:
-                self.window.listbox.select_row(row)
+            # Busca a row pelo tag em vez de hardcoded index — robusto a reorder
+            row = self.window.listbox.get_first_child()
+            while row is not None:
+                if getattr(row, "tag", None) == "settings":
+                    self.window.listbox.select_row(row)
+                    return
+                row = row.get_next_sibling()
+            log.warning("settings row não encontrada na sidebar")
         except Exception:
-            log.warning("não foi possível navegar pra Settings")
+            log.exception("falha ao navegar pra Settings")
 
     def _populate(self) -> None:
         while child := self.listbox.get_first_child():
