@@ -85,7 +85,10 @@ def auto_pick(sources: list[AudioSource]) -> tuple[str | None, str | None]:
 
 
 def list_source_outputs() -> list[dict]:
-    """Lista clients capturando mic agora."""
+    """Lista clients capturando mic agora.
+
+    Returns lista de dicts com keys: source_id, state, app_name, binary, corked.
+    """
     try:
         out = subprocess.check_output(
             ["pactl", "list", "source-outputs"],
@@ -109,9 +112,216 @@ def list_source_outputs() -> list[dict]:
             cur["binary"] = m.group(1)
         elif m := re.match(r"\s*Source:\s*(\d+)", line):
             cur["source_id"] = m.group(1)
+        # B2: capturar state (RUNNING/CORKED/IDLE)
+        elif m := re.match(r"\s*State:\s*(\w+)", line):
+            cur["state"] = m.group(1)
+        elif m := re.match(r"\s*Corked:\s*(\w+)", line):
+            cur["corked"] = m.group(1).lower() == "yes"
     if cur:
         entries.append(cur)
     return entries
+
+
+def list_sink_inputs() -> list[dict]:
+    """B2: Lista clients reproduzindo áudio (output stream).
+
+    Útil para detectar áudio CHEGANDO de uma reunião (interlocutor falando)
+    mesmo se nosso mic está mudo. Returns lista de dicts com:
+      sink_id, state, app_name, binary, corked, volume_pct
+    """
+    try:
+        out = subprocess.check_output(
+            ["pactl", "list", "sink-inputs"],
+            text=True,
+            env=_pactl_env(),
+            timeout=3,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return []
+
+    entries: list[dict] = []
+    cur: dict = {}
+    for line in out.splitlines():
+        if re.match(r"^Sink Input #\d+", line):
+            if cur:
+                entries.append(cur)
+            cur = {}
+        elif m := re.match(r"\s*application\.name\s*=\s*\"([^\"]+)\"", line):
+            cur["app_name"] = m.group(1)
+        elif m := re.match(r"\s*application\.process\.binary\s*=\s*\"([^\"]+)\"", line):
+            cur["binary"] = m.group(1)
+        elif m := re.match(r"\s*Sink:\s*(\d+)", line):
+            cur["sink_id"] = m.group(1)
+        elif m := re.match(r"\s*State:\s*(\w+)", line):
+            cur["state"] = m.group(1)
+        elif m := re.match(r"\s*Corked:\s*(\w+)", line):
+            cur["corked"] = m.group(1).lower() == "yes"
+        elif m := re.match(r"\s*Volume:.+?(\d+)%", line):
+            cur["volume_pct"] = int(m.group(1))
+    if cur:
+        entries.append(cur)
+    return entries
+
+
+# B2: Whitelist robusta de apps de reunião (process binary names)
+DEFAULT_MEETING_APPS = [
+    # Native desktop apps
+    "teams-for-linux",
+    "ms-teams",
+    "msteams",
+    "zoom",
+    "zoom-us",
+    "slack",
+    "slack-canary",
+    "discord",
+    "discord-canary",
+    "discord-ptb",
+    "Discord",
+    "WebexTeams",
+    "WebexLinux",
+    "webex",
+    "skype",
+    "skypeforlinux",
+    "element-desktop",
+    "element-electron",
+    "Element",
+    "signal-desktop",
+    "obs",
+    "obs-studio",
+    "OBS Studio",
+    "krfb",
+    "krdc",  # remote desktop / screen share
+    "audacity",
+    "thunderbird",
+    # Browsers (Teams web / Meet / Zoom web / Whereby / Jitsi)
+    "firefox",
+    "firefox-esr",
+    "chromium",
+    "chromium-browser",
+    "Chromium",
+    "google-chrome",
+    "google-chrome-stable",
+    "google-chrome-beta",
+    "Google Chrome",
+    "brave-browser",
+    "brave",
+    "vivaldi",
+    "vivaldi-stable",
+    "WebKitWebProcess",
+    "epiphany",  # GNOME Web
+    # Screen recorders (often used in meetings)
+    "kazam",
+    "simplescreenrecorder",
+]
+
+
+@dataclass
+class MeetingSignal:
+    """B2: Resultado da detecção multi-sinal de reunião ativa."""
+
+    in_meeting: bool
+    confidence: float  # 0..1
+    reason: str  # human-readable
+    signals_active: list[str]  # ex: ["mic_used_by_firefox", "speaker_active_zoom"]
+    apps_detected: list[str]  # ex: ["firefox", "zoom"]
+
+
+def detect_meeting(cfg: dict | None = None) -> MeetingSignal:
+    """B2: Detecta call ativa via PulseAudio signals (funciona minimizado).
+
+    Sinais combinados:
+      Sig1 (peso 0.9): source-output RUNNING != recordo
+                       (alguém usando microfone)
+      Sig2 (peso 0.7): sink-input RUNNING + binary whitelist + audio
+                       sendo emitido (volume_pct > 0)
+                       (áudio chegando da call, mesmo se mic mudo)
+
+    Window title / wmctrl NÃO usado — quebraria com janela minimizada.
+
+    Args:
+        cfg: dict com 'meeting_apps' (lista whitelist). Se None, usa default.
+
+    Returns:
+        MeetingSignal. in_meeting=True se sig1 OR sig2.
+    """
+    if cfg is None:
+        cfg = {}
+    meeting_apps = cfg.get("meeting_apps", DEFAULT_MEETING_APPS)
+    meeting_apps_lower = {a.lower() for a in meeting_apps}
+
+    signals_active: list[str] = []
+    apps_detected: list[str] = []
+    confidence = 0.0
+
+    # Sig1: source-output RUNNING (alguém capturando mic)
+    for entry in list_source_outputs():
+        if entry.get("state") != "RUNNING":
+            continue
+        if entry.get("corked"):
+            continue
+        binary = (entry.get("binary") or "").lower()
+        app = (entry.get("app_name") or "").lower()
+        # Excluir nosso próprio recording
+        if "recordo" in app or "recordo" in binary or "ffmpeg" in binary:
+            continue
+        # Match em whitelist (binary direto OR substring)
+        is_meeting = (
+            binary in meeting_apps_lower
+            or app in meeting_apps_lower
+            or any(a in binary for a in meeting_apps_lower if len(a) > 3)
+            or any(a in app for a in meeting_apps_lower if len(a) > 3)
+        )
+        if is_meeting or binary or app:
+            # Mic em uso por outro app SEMPRE conta como sinal forte
+            signals_active.append(f"mic_used_by_{binary or app}")
+            apps_detected.append(binary or app)
+            confidence = max(confidence, 0.9)
+
+    # Sig2: sink-input RUNNING + meeting app + audio passing
+    for entry in list_sink_inputs():
+        if entry.get("state") != "RUNNING":
+            continue
+        if entry.get("corked"):
+            continue
+        binary = (entry.get("binary") or "").lower()
+        app = (entry.get("app_name") or "").lower()
+        # Skip nosso próprio playback
+        if "recordo" in app or "recordo" in binary:
+            continue
+        # Match meeting app
+        is_meeting = (
+            binary in meeting_apps_lower
+            or app in meeting_apps_lower
+            or any(a in binary for a in meeting_apps_lower if len(a) > 3)
+            or any(a in app for a in meeting_apps_lower if len(a) > 3)
+        )
+        if not is_meeting:
+            continue
+        volume = entry.get("volume_pct", 100)
+        # Apenas considera ativo se volume > 0 (não muted)
+        if volume > 0:
+            signals_active.append(f"speaker_active_{binary or app}")
+            apps_detected.append(binary or app)
+            confidence = max(confidence, 0.7)
+
+    # Boost confidence se múltiplos sinais
+    n_sigs = len(signals_active)
+    if n_sigs > 1:
+        confidence = min(1.0, confidence + 0.1 * (n_sigs - 1))
+
+    in_meeting = confidence >= 0.5
+    if in_meeting:
+        reason = f"{n_sigs} sinal(is): {', '.join(signals_active[:3])}"
+    else:
+        reason = "Nenhum sinal de reunião detectado"
+
+    return MeetingSignal(
+        in_meeting=in_meeting,
+        confidence=confidence,
+        reason=reason,
+        signals_active=signals_active,
+        apps_detected=list(set(apps_detected)),
+    )
 
 
 def detect_active_call(cfg: dict) -> str | None:

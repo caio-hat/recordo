@@ -476,17 +476,101 @@ class Daemon:
                 )
                 if db is not None:
                     if db < SILENCE_THRESHOLD_DB:
+                        # B2: Antes de marcar como silêncio, checar se há reunião ativa
+                        # via multi-signal (mic em uso por outro app OR speaker app ativo).
+                        # Se sim, NÃO incrementar streak — usuário pode estar mute em call.
+                        from .sources import detect_meeting
+
+                        # Carrega config auto_detect (whitelist de apps)
+                        ad_cfg = self.config.get("auto_detect", {})
+                        # Permite override pela whitelist do auto_detect.apps
+                        meeting_cfg = {
+                            "meeting_apps": ad_cfg.get("apps") or None,
+                        }
+                        # Se 'apps' explicit lista, usa; senão default
+                        if not meeting_cfg["meeting_apps"]:
+                            meeting_cfg.pop("meeting_apps", None)
+
+                        sig = detect_meeting(meeting_cfg)
+                        if sig.in_meeting and sig.confidence >= 0.6:
+                            log.debug(
+                                "silêncio %.1fdB mas %s (conf=%.2f) — não para",
+                                db,
+                                sig.reason,
+                                sig.confidence,
+                            )
+                            self.silence_streak = 0.0
+                            continue  # skip resto do bloco (não incrementa, não notifica)
+
                         self.silence_streak += SILENCE_CHECK_INTERVAL
                         log.debug("silêncio: %.1fdB streak=%.0fs", db, self.silence_streak)
                         if self.silence_streak >= SILENCE_MAX_SECONDS:
-                            notify(
-                                "🟡 Silêncio prolongado",
-                                f"Mic abaixo de {SILENCE_THRESHOLD_DB}dB "
-                                f"por {SILENCE_MAX_SECONDS // 60}min — parando.",
-                            )
-                            await self._cmd_stop({})
+                            # B2: popup persistente em vez de auto-stop
+                            popup_persistent = ad_cfg.get("popup_persistent", True)
+                            if popup_persistent:
+                                # Notify com action "stop" - se user não clicar, continua gravando
+                                action = await self._notify_silence_with_action(db)
+                                if action == "stop":
+                                    notify(
+                                        "🛑 Parando gravação",
+                                        "Confirmado pelo usuário.",
+                                    )
+                                    await self._cmd_stop({})
+                                else:
+                                    # User não confirmou parar — reset streak e continua
+                                    log.info("silêncio confirmado mas user escolheu continuar")
+                                    self.silence_streak = 0.0
+                            else:
+                                notify(
+                                    "🟡 Silêncio prolongado",
+                                    f"Mic abaixo de {SILENCE_THRESHOLD_DB}dB "
+                                    f"por {SILENCE_MAX_SECONDS // 60}min — parando.",
+                                )
+                                await self._cmd_stop({})
                     else:
                         self.silence_streak = 0.0
+
+    async def _notify_silence_with_action(self, db: float) -> str | None:
+        """B2: Notify-send persistente com action 'stop'. Retorna 'stop' ou None.
+
+        Usa flag -A (action) e -t 0 (sem timeout). Default 30s timeout local
+        para não bloquear forever.
+        """
+        cmd = [
+            "notify-send",
+            "-a",
+            "Recordo",
+            "-u",
+            "normal",
+            "-t",
+            "0",  # sem timeout (persistente até clicar)
+            "-A",
+            "stop=Parar agora",
+            "-A",
+            "continue=Continuar gravando",
+            "🟡 Silêncio prolongado",
+            f"Mic abaixo de {SILENCE_THRESHOLD_DB}dB por {SILENCE_MAX_SECONDS // 60}min.\n"
+            f"Você está em call sem falar? Clique para escolher.",
+        ]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            # notify-send com -A retorna a action_key clicada via stdout
+            try:
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=300)
+                action = stdout.decode().strip()
+                log.info("popup silêncio: user clicou '%s'", action)
+                return action if action else None
+            except asyncio.TimeoutError:
+                proc.terminate()
+                log.info("popup silêncio: timeout (5min) sem resposta — continua")
+                return None
+        except (FileNotFoundError, OSError) as e:
+            log.warning("notify-send action falhou: %s", e)
+            return None
 
     async def _auto_detect_loop(self) -> None:
         """Event-driven: acorda em eventos `pactl subscribe` OU tick de liveness.

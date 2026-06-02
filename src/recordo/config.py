@@ -211,6 +211,11 @@ DEFAULTS: dict[str, Any] = {
         "min_mic_duration_seconds": 8,
         "quiet_period_after_stop_minutes": 5,
         "poll_interval_seconds": 5,
+        # B2: popup persistente (notify-send -t 0 com action) em vez de auto-stop
+        # quando silêncio prolongado for detectado. User decide.
+        "popup_persistent": True,
+        # B2: confidence mínima para considerar reunião ativa via multi-sinal
+        "min_confidence": 0.6,
     },
     # A2 (Phase II): Pipeline opt-in
     "pipeline": {
