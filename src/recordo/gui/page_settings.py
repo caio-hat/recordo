@@ -80,6 +80,9 @@ class SettingsPage(Gtk.ScrolledWindow):
         # ── Resumo (LLM Provider) ────────────────────────────────────────────
         self._build_summarizer_group(prefs)
 
+        # ── Pipeline (A2: opt-in toggle) ─────────────────────────────────────
+        self._build_pipeline_group(prefs)
+
         # ── Auto-detect ──────────────────────────────────────────────────────
         self._build_autodetect_group(prefs)
 
@@ -439,6 +442,46 @@ class SettingsPage(Gtk.ScrolledWindow):
         self._sum_azure_group.set_visible(sel == "azure_openai")
         self._sum_heuristic_group.set_visible(sel == "heuristic")
 
+    def _build_pipeline_group(self, prefs: Adw.PreferencesPage) -> None:
+        """A2: Configurações do pipeline (auto_run + steps automáticos)."""
+        pp_cfg = self.cfg.get("pipeline", {})
+
+        pp_group = Adw.PreferencesGroup(
+            title="🚀 Pipeline pós-gravação",
+            description=(
+                "Controle quais passos rodam automaticamente após gravar. "
+                "Quando desabilitado, você aciona manualmente via botões em cada gravação."
+            ),
+        )
+        prefs.add(pp_group)
+
+        # Switch principal: auto_run
+        self.pp_auto_run_row = Adw.SwitchRow(
+            title="Pipeline automático",
+            subtitle=(
+                "Ao parar gravação, executa transcrição (e resumo se habilitado). "
+                "Desligue se quiser controle manual e economizar recursos."
+            ),
+        )
+        self.pp_auto_run_row.set_active(bool(pp_cfg.get("auto_run", False)))
+        pp_group.add(self.pp_auto_run_row)
+
+        # Switch: auto_summarize (só relevante se auto_run=True)
+        self.pp_auto_summarize_row = Adw.SwitchRow(
+            title="Resumir automaticamente",
+            subtitle="Quando o pipeline automático rodar, gera resumo via LLM.",
+        )
+        self.pp_auto_summarize_row.set_active(bool(pp_cfg.get("auto_summarize", True)))
+        pp_group.add(self.pp_auto_summarize_row)
+
+        # Switch: auto_tasks
+        self.pp_auto_tasks_row = Adw.SwitchRow(
+            title="Extrair tarefas automaticamente",
+            subtitle="Gera lista de action items (tasks.md). Requer LLM configurado.",
+        )
+        self.pp_auto_tasks_row.set_active(bool(pp_cfg.get("auto_tasks", False)))
+        pp_group.add(self.pp_auto_tasks_row)
+
     def _build_autodetect_group(self, prefs: Adw.PreferencesPage) -> None:
         ad_group = Adw.PreferencesGroup(
             title="🤖 Auto-detect Call",
@@ -524,6 +567,12 @@ class SettingsPage(Gtk.ScrolledWindow):
             self.cfg["auto_detect"]["enabled"] = self.ad_enabled_row.get_active()
             self.cfg["auto_detect"]["min_mic_duration_seconds"] = int(self.ad_min_dur_row.get_value())
             self.cfg["auto_detect"]["quiet_period_after_stop_minutes"] = int(self.ad_quiet_row.get_value())
+
+            # Pipeline (A2)
+            pp = self.cfg.setdefault("pipeline", {})
+            pp["auto_run"] = self.pp_auto_run_row.get_active()
+            pp["auto_summarize"] = self.pp_auto_summarize_row.get_active()
+            pp["auto_tasks"] = self.pp_auto_tasks_row.get_active()
 
             save_config(self.cfg)
             from .async_client import call_async

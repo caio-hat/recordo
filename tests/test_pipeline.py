@@ -226,7 +226,7 @@ class TestPostPipeline:
         notas_dir,
         monkeypatch,
     ):
-        """Confirma que post_pipeline dispara thread de transcrição."""
+        """Confirma que post_pipeline dispara thread de transcrição quando auto_run=True (A2)."""
         called: list[tuple] = []
 
         def fake_transcribe_async(*args, **kwargs):
@@ -234,10 +234,38 @@ class TestPostPipeline:
 
         monkeypatch.setattr(pipeline_mod, "_transcribe_async", fake_transcribe_async)
 
+        # A2: precisa pipeline.auto_run=True para spawnar thread
+        cfg = {
+            "transcriber": {"backend": "whisper", "language": "pt"},
+            "summarizer": {"backend": "ollama"},
+            "pipeline": {"auto_run": True, "auto_summarize": True, "auto_tasks": False},
+        }
+
         # Patch threading.Thread pra capturar antes de spawn
         with patch.object(pipeline_mod.threading, "Thread") as MockThread:
             mock_thread = MagicMock()
             MockThread.return_value = mock_thread
-            post_pipeline(session_state, final_audio, [])
+            post_pipeline(session_state, final_audio, [], config=cfg)
             assert MockThread.called
             mock_thread.start.assert_called_once()
+
+    def test_no_thread_when_auto_run_false(
+        self,
+        session_state,
+        final_audio,
+        notas_dir,
+    ):
+        """A2: post_pipeline NÃO dispara thread quando pipeline.auto_run=False."""
+        cfg = {
+            "transcriber": {"backend": "whisper", "language": "pt"},
+            "summarizer": {"backend": "ollama"},
+            "pipeline": {"auto_run": False},
+        }
+        with patch.object(pipeline_mod.threading, "Thread") as MockThread:
+            target = post_pipeline(session_state, final_audio, [], config=cfg)
+            # Thread não deve ser instanciada
+            assert not MockThread.called
+            # Mas target_dir foi criado e nota.md está lá
+            assert target is not None
+            assert (target / "nota.md").exists()
+            assert (target / "audio.opus").exists()

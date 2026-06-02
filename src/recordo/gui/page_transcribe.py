@@ -167,13 +167,123 @@ class TranscribePage(Gtk.Box):
             return
 
         for d in dirs:
-            row = Adw.ActionRow(title=d.name.replace("_", " "))
-            row.path = d  # type: ignore[attr-defined]
-            # Mostra duração se disponível no nota.md
-            duration = self._read_duration(d)
-            if duration:
-                row.set_subtitle(duration)
-            self.listbox.append(row)
+            self._build_recording_row(d)
+
+    def _build_recording_row(self, d: Path) -> None:
+        """A3: Constrói row com badges de status + botões Transcrever/Resumir/Tasks."""
+        from ..pipeline import get_recording_status
+
+        row = Adw.ActionRow(title=d.name.replace("_", " "))
+        row.path = d  # type: ignore[attr-defined]
+
+        # Subtitle: duração + status badges
+        duration = self._read_duration(d)
+        status = get_recording_status(d)
+        badges = []
+        badges.append("✓ Transcrito" if status["has_transcript"] else "✗ Sem transcrição")
+        badges.append("✓ Resumo" if status["has_summary"] else "✗ Sem resumo")
+        badges.append("✓ Tarefas" if status["has_tasks"] else "✗ Sem tarefas")
+        subtitle = f"{duration} · {' · '.join(badges)}" if duration else " · ".join(badges)
+        row.set_subtitle(subtitle)
+
+        # Suffix box com botões action
+        action_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4, valign=Gtk.Align.CENTER)
+
+        # Botão Transcrever
+        btn_t = Gtk.Button(icon_name="document-edit-symbolic", tooltip_text="Transcrever áudio")
+        btn_t.add_css_class("flat")
+        btn_t.connect("clicked", self._on_run_step, d, "transcribe")
+        if status["has_transcript"]:
+            btn_t.add_css_class("success")
+            btn_t.set_tooltip_text("Re-transcrever (já existe)")
+        action_box.append(btn_t)
+
+        # Botão Resumir
+        btn_s = Gtk.Button(icon_name="text-x-generic-symbolic", tooltip_text="Resumir com IA")
+        btn_s.add_css_class("flat")
+        btn_s.set_sensitive(status["has_transcript"])
+        btn_s.connect("clicked", self._on_run_step, d, "summarize")
+        if status["has_summary"]:
+            btn_s.add_css_class("success")
+            btn_s.set_tooltip_text("Re-gerar resumo (já existe)")
+        action_box.append(btn_s)
+
+        # Botão Tasks
+        btn_x = Gtk.Button(icon_name="checkbox-symbolic", tooltip_text="Extrair tarefas com IA")
+        btn_x.add_css_class("flat")
+        btn_x.set_sensitive(status["has_transcript"])
+        btn_x.connect("clicked", self._on_run_step, d, "tasks")
+        if status["has_tasks"]:
+            btn_x.add_css_class("success")
+            btn_x.set_tooltip_text("Re-extrair tarefas (já existe)")
+        action_box.append(btn_x)
+
+        # Botão Abrir pasta
+        btn_o = Gtk.Button(icon_name="folder-open-symbolic", tooltip_text="Abrir pasta")
+        btn_o.add_css_class("flat")
+        btn_o.connect("clicked", self._on_open_folder, d)
+        action_box.append(btn_o)
+
+        row.add_suffix(action_box)
+        self.listbox.append(row)
+
+    def _on_run_step(self, btn: Gtk.Button, target_dir: Path, step: str) -> None:
+        """A3: Aciona pipeline.run_step async + atualiza UI."""
+        from ..pipeline import run_step
+
+        btn.set_sensitive(False)
+        # Spinner inline
+        spinner = Gtk.Spinner(spinning=True)
+        original_child = btn.get_child()
+        btn.set_child(spinner)
+
+        step_label = {"transcribe": "Transcrever", "summarize": "Resumir", "tasks": "Extrair tarefas"}[step]
+        self.window.toast(f"⏳ {step_label}: {target_dir.name}")
+
+        cfg = load_config()
+
+        def worker():
+            try:
+                result = run_step(target_dir, step, config=cfg)
+            except Exception as e:
+                log.exception("run_step %s falhou", step)
+                result = {"ok": False, "step": step, "error": str(e)}
+            GLib.idle_add(self._on_step_done, btn, original_child, target_dir, step, result)
+            return False
+
+        threading.Thread(target=worker, daemon=True, name=f"recordo-step-{step}").start()
+
+    def _on_step_done(
+        self,
+        btn: Gtk.Button,
+        original_child: Gtk.Widget,
+        target_dir: Path,
+        step: str,
+        result: dict,
+    ) -> bool:
+        btn.set_child(original_child)
+        btn.set_sensitive(True)
+        step_label = {"transcribe": "Transcrição", "summarize": "Resumo", "tasks": "Tarefas"}[step]
+        if result.get("ok"):
+            self.window.toast(f"✓ {step_label} pronta · {result.get('backend', '')}")
+        else:
+            self.window.toast(f"⚠ {step_label}: {result.get('error', '?')}")
+        # Repopula lista para refletir badges atualizadas
+        self._populate()
+        return False
+
+    @staticmethod
+    def _on_open_folder(_btn, target_dir: Path) -> None:
+        import subprocess
+
+        try:
+            subprocess.Popen(
+                ["xdg-open", str(target_dir)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            log.warning("xdg-open não disponível")
 
     @staticmethod
     def _read_duration(d: Path) -> str:

@@ -87,6 +87,7 @@ class Daemon:
 
         self._tasks.append(asyncio.create_task(self._watchdog_loop(), name="watchdog"))
         self._tasks.append(asyncio.create_task(self._auto_detect_loop(), name="auto-detect"))
+        self._tasks.append(asyncio.create_task(self._ollama_idle_loop(), name="ollama-idle"))
 
         loop = asyncio.get_event_loop()
         stop_event = asyncio.Event()
@@ -314,6 +315,37 @@ class Daemon:
         }
 
     # ── background loops ───────────────────────────────────────────────────
+    async def _ollama_idle_loop(self) -> None:
+        """A5: descarrega Ollama models idle por > idle_threshold."""
+        from .summarizer.ollama import unload_ollama_idle_models
+
+        # Configurável via config.toml (default 5min)
+        cfg = load_config()
+        ollama_cfg = cfg.get("summarizer", {}).get("ollama", {})
+        idle_threshold = float(ollama_cfg.get("idle_unload_seconds", 300.0))
+        check_interval = max(60.0, idle_threshold / 5)  # checa 5x por janela
+
+        log.info(
+            "ollama idle loop: threshold=%.0fs, check_interval=%.0fs",
+            idle_threshold,
+            check_interval,
+        )
+
+        while True:
+            try:
+                await asyncio.sleep(check_interval)
+                # Não descarregar durante gravação ativa (poderia atrapalhar pipeline futuro)
+                if self.recorder and self.recorder.recording:
+                    continue
+                n = unload_ollama_idle_models(idle_threshold_sec=idle_threshold)
+                if n > 0:
+                    log.info("ollama idle loop: descarregados %d modelo(s)", n)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.exception("ollama idle loop erro: %s", e)
+                await asyncio.sleep(60.0)
+
     async def _watchdog_loop(self) -> None:
         last_silence_check = 0.0
         while True:

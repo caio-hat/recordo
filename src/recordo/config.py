@@ -136,6 +136,8 @@ DEFAULTS: dict[str, Any] = {
             "max_transcript_chars": 80000,
             "num_ctx": 32768,
             "temperature": 0.3,
+            # A5: tempo de inatividade antes de descarregar modelo (libera VRAM/RAM)
+            "idle_unload_seconds": 300,
         },
         "gemini": {
             "model": "gemini-2.5-flash",
@@ -209,6 +211,17 @@ DEFAULTS: dict[str, Any] = {
         "min_mic_duration_seconds": 8,
         "quiet_period_after_stop_minutes": 5,
         "poll_interval_seconds": 5,
+    },
+    # A2 (Phase II): Pipeline opt-in
+    "pipeline": {
+        # auto_run=False: ao parar gravação, salva só áudio + nota.md cabeçalho;
+        # NÃO dispara transcrição/resumo/tasks. User aciona manual via GUI.
+        # auto_run=True: comportamento legado (todos passos automáticos).
+        "auto_run": False,
+        # Steps a rodar quando auto_run=True (e por padrão na execução manual):
+        "auto_transcribe": True,
+        "auto_summarize": True,
+        "auto_tasks": False,  # opt-in mesmo no auto_run pq tasks é mais novo
     },
     "ui": {
         "theme": "auto",  # auto | light | dark

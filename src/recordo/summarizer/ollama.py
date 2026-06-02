@@ -21,6 +21,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
+import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -32,6 +34,79 @@ log = logging.getLogger(__name__)
 DEFAULT_MODEL = "gemma2:2b"
 DEFAULT_HOST = "http://localhost:11434"
 DEFAULT_TIMEOUT = 120  # segundos — modelos pequenos respondem em <30s
+
+# A5: Tracking global do último uso do Ollama, para descarregamento automático
+# após idle. Usado pelo daemon para chamar unload_idle_models().
+_OLLAMA_LAST_USED_AT: dict[str, float] = {}  # model_name → timestamp monotônico
+_OLLAMA_LOCK = threading.Lock()
+_OLLAMA_PIPELINE_ACTIVE = threading.Event()  # set durante summarize ativo
+
+
+def mark_ollama_in_use(model: str, host: str = DEFAULT_HOST) -> None:
+    """A5: registra que o modelo Ollama foi usado agora."""
+    with _OLLAMA_LOCK:
+        _OLLAMA_LAST_USED_AT[f"{host}|{model}"] = time.monotonic()
+
+
+def get_ollama_last_used() -> dict[str, float]:
+    """A5: retorna copy do mapping last_used (para inspect/test)."""
+    with _OLLAMA_LOCK:
+        return dict(_OLLAMA_LAST_USED_AT)
+
+
+def unload_ollama_model(model: str, host: str = DEFAULT_HOST, timeout: int = 10) -> bool:
+    """A5: descarrega modelo Ollama via API keep_alive=0.
+
+    Idempotente — se o modelo não está carregado, ollama responde 200 OK
+    sem efeito.
+
+    Returns True se request OK, False se erro de rede.
+    """
+    payload = {"model": model, "keep_alive": 0}
+    body = json.dumps(payload).encode("utf-8")
+    req = Request(
+        f"{host.rstrip('/')}/api/generate",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(req, timeout=timeout):
+            log.info("ollama: modelo '%s' descarregado da memória (keep_alive=0)", model)
+            return True
+    except (HTTPError, URLError, OSError, TimeoutError) as e:
+        log.warning("ollama: falha ao descarregar '%s': %s", model, e)
+        return False
+
+
+def unload_ollama_idle_models(idle_threshold_sec: float = 300.0) -> int:
+    """A5: descarrega modelos Ollama ociosos por > threshold.
+
+    Não age se houver pipeline ativo (_OLLAMA_PIPELINE_ACTIVE set).
+
+    Returns: número de modelos descarregados.
+    """
+    if _OLLAMA_PIPELINE_ACTIVE.is_set():
+        log.debug("ollama unload: pipeline ativo, pulando")
+        return 0
+
+    now = time.monotonic()
+    to_unload: list[tuple[str, str]] = []
+    with _OLLAMA_LOCK:
+        for key, ts in list(_OLLAMA_LAST_USED_AT.items()):
+            if now - ts > idle_threshold_sec:
+                host, model = key.split("|", 1)
+                to_unload.append((host, model))
+
+    n_done = 0
+    for host, model in to_unload:
+        if unload_ollama_model(model, host=host):
+            n_done += 1
+            with _OLLAMA_LOCK:
+                # Remove do tracking — quando voltar a usar, mark recriará
+                _OLLAMA_LAST_USED_AT.pop(f"{host}|{model}", None)
+    return n_done
+
 
 # Prompt em pt-BR estruturado pra extrair seções confiáveis. Pedimos JSON
 # pra parsing robusto (Ollama suporta `format: "json"` que força JSON válido).
@@ -78,6 +153,16 @@ class OllamaSummarizer(Summarizer):
         if not transcript.strip():
             return SummaryResult(backend=self.name, error="transcript vazio")
 
+        # A5: marca uso e flag pipeline ativo (evita unload concorrente)
+        mark_ollama_in_use(self.model, host=self.host)
+        _OLLAMA_PIPELINE_ACTIVE.set()
+        try:
+            return self._summarize_inner(transcript, language=language, subject=subject)
+        finally:
+            _OLLAMA_PIPELINE_ACTIVE.clear()
+            mark_ollama_in_use(self.model, host=self.host)  # update timestamp pós-uso
+
+    def _summarize_inner(self, transcript: str, *, language: str = "pt", subject: str = "") -> SummaryResult:
         truncated = transcript
         if len(truncated) > self.max_chars:
             log.info("transcript longo (%d chars), truncando para %d", len(truncated), self.max_chars)

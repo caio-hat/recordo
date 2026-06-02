@@ -25,6 +25,7 @@ WHISPER_PKGS = ["faster-whisper>=1.0"]
 PLACEHOLDER = "_(processando — esta seção é preenchida quando o backend terminar)_"
 SUMMARY_PLACEHOLDER = "_(resumo será gerado após a transcrição)_"
 TOPICS_PLACEHOLDER = "_(assuntos serão identificados após a transcrição)_"
+TASKS_PLACEHOLDER = "_(tarefas serão extraídas após a transcrição)_"
 
 
 class _PipelineStatusStore:
@@ -230,6 +231,22 @@ def post_pipeline(
     nota_md = target_dir / "nota.md"
     _render_nota_md(state, marks, target_dir, backend_name=backend)
 
+    # A2: Pipeline opt-in — se auto_run=False, não dispara transcrição automática.
+    # Usuário aciona manual via GUI (botões Transcrever/Resumir/Tasks per-recording).
+    pipeline_cfg = cfg.get("pipeline", {})
+    if not pipeline_cfg.get("auto_run", False):
+        log.info(
+            "pipeline auto_run=False — gravação salva em %s sem transcrição automática",
+            target_dir.name,
+        )
+        notify(
+            "✓ Gravação salva",
+            f"~/Notas/{target_dir.name}/ — use a GUI para transcrever quando quiser",
+            icon="document-edit",
+            transient=True,
+        )
+        return target_dir
+
     summarizer_cfg = cfg.get("summarizer")
     # Status dict partilhado pra que callers (ex: rerun-pipeline) possam
     # detectar erros assíncronos via join + check.
@@ -244,6 +261,8 @@ def post_pipeline(
             "subject": state.subject,
             "status": pipeline_status,
             "marks": marks,
+            "run_summary": pipeline_cfg.get("auto_summarize", True),
+            "run_tasks": pipeline_cfg.get("auto_tasks", False),
         },
         daemon=False,
         name="recordo-transcribe",
@@ -368,17 +387,21 @@ def _transcribe_async(
     subject: str = "",
     status: dict[str, Any] | None = None,
     marks: list[Mark] | None = None,
+    run_summary: bool = True,
+    run_tasks: bool = False,
 ) -> None:
-    """Worker thread coordenando transcribe → topics → summary.
+    """Worker thread coordenando transcribe → topics → summary → tasks.
 
     `status` é dict partilhado com caller (preenchemos 'ok', 'transcriber',
-    'summary_backend', 'topics_backend', 'error'). Pipeline status store
-    é limpo (clear_old) ao final para evitar memory growth indefinido (B4).
+    'summary_backend', 'topics_backend', 'tasks_backend', 'error'). Pipeline
+    status store é limpo (clear_old) ao final (B4).
+
+    A2/A4: `run_summary` e `run_tasks` permitem opt-out granular.
     """
     if status is None:
         status = {}
     try:
-        # Step 1: Transcribe
+        # Step 1: Transcribe (sempre roda — gating é no caller post_pipeline)
         result = _run_transcription(audio_dst, nota_md, backend, transcriber_cfg, language, marks)
         if result is None:
             status["error"] = "transcrição indisponível"
@@ -386,13 +409,13 @@ def _transcribe_async(
         status["transcriber"] = result.backend
         notify(
             "✓ Transcrição pronta",
-            f"~/Notas/{target_dir.name}/ — gerando resumo…",
+            f"~/Notas/{target_dir.name}/ — gerando resumo…" if run_summary else f"~/Notas/{target_dir.name}/",
             icon="document-edit",
             transient=True,
         )
 
-        # Step 2: Topics + Summary (only if summarizer configured)
-        if summarizer_cfg is not None:
+        # Step 2: Topics + Summary (apenas se summarizer configurado E run_summary=True)
+        if summarizer_cfg is not None and run_summary:
             status["topics_backend"] = _run_topics(result, nota_md, target_dir, subject, summarizer_cfg)
             status["summary_backend"] = _run_summary_step(
                 result, nota_md, target_dir, subject, summarizer_cfg, language
@@ -403,6 +426,30 @@ def _transcribe_async(
                 icon="document-edit",
                 transient=True,
             )
+
+        # Step 3: Tasks (A4) — apenas se summarizer configurado E run_tasks=True
+        if summarizer_cfg is not None and run_tasks:
+            try:
+                from .summarizer.tasks import extract_tasks
+
+                tasks_result = extract_tasks(
+                    result.text,
+                    subject=subject,
+                    summarizer_cfg=summarizer_cfg,
+                    language=language,
+                )
+                _embed_tasks(nota_md, tasks_result)
+                _write_tasks_md(target_dir, tasks_result)
+                status["tasks_backend"] = tasks_result.backend
+                notify(
+                    "✓ Tarefas extraídas",
+                    f"~/Notas/{target_dir.name}/tasks.md",
+                    icon="document-edit",
+                    transient=True,
+                )
+            except Exception as e:
+                log.exception("tasks extraction falhou: %s", e)
+                status["tasks_error"] = str(e)[:200]
 
         status["ok"] = True
     except Exception as e:
@@ -695,6 +742,68 @@ def _write_summary_md(target_dir: Path, summary: Any) -> None:
     )
 
 
+def _embed_tasks(nota_md: Path, tasks_result: Any) -> None:
+    """Substitui TASKS_PLACEHOLDER em nota.md pelo bloco markdown das tarefas (A4).
+
+    Atualiza linha `tasks_backend:` no frontmatter.
+    """
+    nota = nota_md.read_text(encoding="utf-8")
+    md_block = tasks_result.to_section_markdown()
+
+    if TASKS_PLACEHOLDER in nota:
+        nota = nota.replace(TASKS_PLACEHOLDER, md_block.rstrip())
+    elif re.search(r"^## Tarefas\b", nota, flags=re.M):
+        # Re-rodada: substitui seção existente
+        nota = re.sub(
+            r"## Tarefas\s*\n+(?:.*?\n)*?(?=## |\Z)",
+            f"## Tarefas\n\n{md_block.rstrip()}\n\n",
+            nota,
+            count=1,
+            flags=re.DOTALL | re.M,
+        )
+    else:
+        # Insere após Resumo (ou no final se sem Resumo)
+        if re.search(r"^## Resumo\b", nota, flags=re.M):
+            # Inserir após a próxima `## ` que aparece depois de "## Resumo"
+            nota = re.sub(
+                r"(^## Resumo\s*\n+(?:.*?\n)*?)(?=## |\Z)",
+                lambda m: f"{m.group(1)}\n## Tarefas\n\n{md_block.rstrip()}\n\n",
+                nota,
+                count=1,
+                flags=re.DOTALL | re.M,
+            )
+        else:
+            nota += f"\n\n## Tarefas\n\n{md_block.rstrip()}\n"
+
+    # Frontmatter: tasks_backend:
+    if re.search(r"^tasks_backend:.*$", nota, flags=re.M):
+        nota = re.sub(
+            r"^tasks_backend:.*$",
+            f"tasks_backend: {tasks_result.backend or 'none'}",
+            nota,
+            count=1,
+            flags=re.M,
+        )
+    elif "summarizer:" in nota:
+        nota = re.sub(
+            r"^(summarizer:.*)$",
+            f"\\1\ntasks_backend: {tasks_result.backend or 'none'}",
+            nota,
+            count=1,
+            flags=re.M,
+        )
+
+    nota_md.write_text(nota, encoding="utf-8")
+
+
+def _write_tasks_md(target_dir: Path, tasks_result: Any) -> None:
+    """Salva tasks.md standalone."""
+    (target_dir / "tasks.md").write_text(
+        tasks_result.to_markdown(),
+        encoding="utf-8",
+    )
+
+
 def _embed_topics(nota_md: Path, topics_result: Any) -> None:
     """Substitui TOPICS_PLACEHOLDER em nota.md pelo bloco markdown dos tópicos.
 
@@ -981,3 +1090,246 @@ def _ffprobe_duration(path: Path) -> float | None:
         return float(r.stdout.strip())
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError, FileNotFoundError):
         return None
+
+
+# ── A3: Per-recording action runner ────────────────────────────────────────
+
+
+def get_recording_status(target_dir: Path) -> dict[str, bool]:
+    """Detect quais steps já foram executados numa gravação (A3).
+
+    Inspeciona artefatos no target_dir + frontmatter de nota.md para retornar:
+      {
+          "has_audio": bool,        # audio.opus existe
+          "has_transcript": bool,   # transcricao.txt + seção "## Transcrição" preenchida
+          "has_summary": bool,      # resumo.md OR seção "## Resumo" preenchida
+          "has_topics": bool,       # seção "## Assuntos" preenchida
+          "has_tasks": bool,        # tasks.md OR seção "## Tarefas" preenchida
+      }
+    """
+    status = {
+        "has_audio": False,
+        "has_transcript": False,
+        "has_summary": False,
+        "has_topics": False,
+        "has_tasks": False,
+    }
+
+    if not target_dir.exists() or not target_dir.is_dir():
+        return status
+
+    if (target_dir / "audio.opus").exists():
+        status["has_audio"] = True
+
+    # Transcrição: arquivo + seção populada
+    txt = target_dir / "transcricao.txt"
+    if txt.exists() and txt.stat().st_size > 0:
+        status["has_transcript"] = True
+
+    # Verifica nota.md para placeholders vs conteúdo real
+    nota = target_dir / "nota.md"
+    if nota.exists():
+        try:
+            content = nota.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            content = ""
+
+        # Resumo: existe seção e não é placeholder
+        if "## Resumo" in content and SUMMARY_PLACEHOLDER not in content:
+            # Extra check: tem texto após "## Resumo"
+            m = re.search(r"^## Resumo\s*\n+([\s\S]*?)(?=^## |\Z)", content, flags=re.M)
+            if m and m.group(1).strip() and "_(sem resumo gerado)_" not in m.group(1):
+                status["has_summary"] = True
+
+        if (target_dir / "resumo.md").exists():
+            status["has_summary"] = True
+
+        # Tópicos
+        if "## Assuntos" in content and TOPICS_PLACEHOLDER not in content:
+            m = re.search(r"^## Assuntos[^\n]*\s*\n+([\s\S]*?)(?=^## |\Z)", content, flags=re.M)
+            if m and m.group(1).strip():
+                status["has_topics"] = True
+
+        # Tarefas
+        if "## Tarefas" in content and TASKS_PLACEHOLDER not in content:
+            m = re.search(r"^## Tarefas\s*\n+([\s\S]*?)(?=^## |\Z)", content, flags=re.M)
+            if m and m.group(1).strip() and "_(nenhuma tarefa identificada" not in m.group(1):
+                status["has_tasks"] = True
+
+        if (target_dir / "tasks.md").exists():
+            status["has_tasks"] = True
+
+    return status
+
+
+def run_step(
+    target_dir: Path,
+    step: str,
+    *,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Aciona um step do pipeline manualmente para uma gravação existente (A3).
+
+    Args:
+        target_dir: ~/Notas/<date>_<subject>/
+        step: "transcribe" | "summarize" | "tasks"
+        config: config opcional (default: load_config())
+
+    Returns:
+        dict com:
+          ok: bool
+          step: str
+          backend: str (se aplicável)
+          error: str (se falhou)
+
+    Raises FileNotFoundError se artefatos faltam.
+    """
+    if step not in ("transcribe", "summarize", "tasks"):
+        return {"ok": False, "step": step, "error": f"step inválido: {step}"}
+
+    audio = target_dir / "audio.opus"
+    nota_md = target_dir / "nota.md"
+
+    if not audio.exists():
+        return {"ok": False, "step": step, "error": f"audio.opus ausente em {target_dir}"}
+    if not nota_md.exists():
+        return {"ok": False, "step": step, "error": f"nota.md ausente em {target_dir}"}
+
+    cfg = config if config is not None else load_config()
+    transcriber_cfg = cfg.get("transcriber", {})
+    backend = transcriber_cfg.get("backend", "whisper")
+    lang = transcriber_cfg.get("language", "pt")
+    summarizer_cfg = cfg.get("summarizer", {})
+
+    # Subject derivado do nome do dir
+    subject = re.sub(r"^\d{4}-\d{2}-\d{2}_", "", target_dir.name).replace("_", " ")
+
+    try:
+        if step == "transcribe":
+            log.info("run_step transcribe: %s (%s)", target_dir.name, backend)
+            return _do_transcribe_step(audio, nota_md, backend, transcriber_cfg, lang)
+
+        # Para summarize/tasks, precisa ter transcrição primeiro
+        txt = target_dir / "transcricao.txt"
+        if not txt.exists() or txt.stat().st_size == 0:
+            return {
+                "ok": False,
+                "step": step,
+                "error": "transcrição não existe — rode 'transcribe' primeiro",
+            }
+        transcript_text = txt.read_text(encoding="utf-8")
+
+        if step == "summarize":
+            log.info("run_step summarize: %s", target_dir.name)
+            return _do_summarize_step(transcript_text, nota_md, target_dir, subject, summarizer_cfg, lang)
+
+        if step == "tasks":
+            log.info("run_step tasks: %s", target_dir.name)
+            return _do_tasks_step(transcript_text, nota_md, target_dir, subject, summarizer_cfg, lang)
+
+    except Exception as e:
+        log.exception("run_step %s falhou: %s", step, e)
+        return {"ok": False, "step": step, "error": str(e)[:200]}
+
+    return {"ok": False, "step": step, "error": "unreachable"}
+
+
+def _do_transcribe_step(
+    audio: Path,
+    nota_md: Path,
+    backend: str,
+    transcriber_cfg: dict[str, Any],
+    language: str,
+) -> dict[str, Any]:
+    """Helper interno: roda transcrição standalone."""
+    actual_backend = _resolve_backend_with_fallback(backend, transcriber_cfg)
+    if actual_backend is None:
+        return {"ok": False, "step": "transcribe", "error": "transcrição indisponível"}
+
+    transcriber = get_transcriber(actual_backend, transcriber_cfg)
+    result = transcriber.transcribe(audio, language=language)
+
+    # Resetar placeholder se já tinha transcrição
+    nota = nota_md.read_text(encoding="utf-8")
+    if PLACEHOLDER not in nota:
+        nota = re.sub(
+            r"## Transcrição\s*\n+(?:```[\s\S]*?```|\[.*?\]).*?$",
+            f"## Transcrição\n\n{PLACEHOLDER}\n",
+            nota,
+            count=1,
+            flags=re.DOTALL | re.M,
+        )
+        nota_md.write_text(nota, encoding="utf-8")
+
+    _write_result(audio, nota_md, result)
+    _set_transcription_status(nota_md, "done")
+    return {"ok": True, "step": "transcribe", "backend": result.backend}
+
+
+def _do_summarize_step(
+    transcript_text: str,
+    nota_md: Path,
+    target_dir: Path,
+    subject: str,
+    summarizer_cfg: dict[str, Any],
+    language: str,
+) -> dict[str, Any]:
+    """Helper interno: roda summarize + topics standalone."""
+    if not summarizer_cfg or summarizer_cfg.get("backend") == "none":
+        return {"ok": False, "step": "summarize", "error": "summarizer não configurado"}
+
+    # Topics
+    from .topics import extract_topics
+    from .transcribers import TranscriptionResult, TranscriptionSegment
+
+    # Reconstrói TranscriptionResult mínimo (segments podem estar no .srt)
+    fake_segs = [TranscriptionSegment(start=0.0, end=0.0, text=transcript_text)]
+    result_for_topics = TranscriptionResult(
+        segments=fake_segs,
+        language=language,
+        language_probability=1.0,
+        backend="manual",
+    )
+    topics_result = extract_topics(result_for_topics, subject=subject, summarizer_cfg=summarizer_cfg)
+    _embed_topics(nota_md, topics_result)
+    _write_topics_json(target_dir, topics_result)
+
+    # Summary
+    summary = _generate_summary(
+        transcript_text,
+        subject=subject,
+        summarizer_cfg=summarizer_cfg,
+        language=language,
+    )
+    _embed_summary(nota_md, summary)
+    _write_summary_md(target_dir, summary)
+    return {"ok": True, "step": "summarize", "backend": summary.backend}
+
+
+def _do_tasks_step(
+    transcript_text: str,
+    nota_md: Path,
+    target_dir: Path,
+    subject: str,
+    summarizer_cfg: dict[str, Any],
+    language: str,
+) -> dict[str, Any]:
+    """Helper interno: roda extração de tarefas standalone (A4)."""
+    if not summarizer_cfg or summarizer_cfg.get("backend") in ("none", "heuristic"):
+        return {"ok": False, "step": "tasks", "error": "tasks requer LLM (não-heuristic)"}
+
+    from .summarizer.tasks import extract_tasks
+
+    tasks_result = extract_tasks(
+        transcript_text,
+        subject=subject,
+        summarizer_cfg=summarizer_cfg,
+        language=language,
+    )
+
+    if tasks_result.error:
+        return {"ok": False, "step": "tasks", "error": tasks_result.error}
+
+    _embed_tasks(nota_md, tasks_result)
+    _write_tasks_md(target_dir, tasks_result)
+    return {"ok": True, "step": "tasks", "backend": tasks_result.backend}

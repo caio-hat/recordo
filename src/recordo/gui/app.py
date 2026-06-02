@@ -76,6 +76,18 @@ button.pill.destructive-action {
     font-weight: bold;
 }
 
+/* A1: Daemon status indicator */
+.daemon-status {
+    font-size: 16pt;
+    margin: 0 6px;
+}
+.daemon-status.success {
+    color: @success_color;
+}
+.daemon-status.error {
+    color: @error_color;
+}
+
 /* Header bar mais limpa */
 headerbar {
     min-height: 48px;
@@ -226,11 +238,23 @@ class RecordoWindow(Adw.ApplicationWindow):
         btn_notas.connect("clicked", self._on_open_notas)
         header_content.pack_start(btn_notas)
 
+        # Indicador de status do daemon (A1) — bullet verde/vermelho
+        self.daemon_status_label = Gtk.Label(label="●")
+        self.daemon_status_label.set_tooltip_text("Daemon: verificando...")
+        self.daemon_status_label.add_css_class("daemon-status")
+        self.daemon_status_label.add_css_class("dim-label")
+        header_content.pack_end(self.daemon_status_label)
+
         # Menu hambúrguer (direito)
         menu = Gio.Menu()
         menu.append("Sobre Recordo", "app.about")
         menu.append("Recarregar config", "app.reload-config")
-        menu.append("Encerrar daemon", "app.quit-daemon")
+        # A1: Daemon control submenu
+        daemon_menu = Gio.Menu()
+        daemon_menu.append("Iniciar daemon", "app.start-daemon")
+        daemon_menu.append("Reiniciar daemon", "app.restart-daemon")
+        daemon_menu.append("Encerrar daemon", "app.quit-daemon")
+        menu.append_submenu("Daemon", daemon_menu)
         menu_btn = Gtk.MenuButton()
         menu_btn.set_icon_name("open-menu-symbolic")
         menu_btn.set_menu_model(menu)
@@ -242,6 +266,39 @@ class RecordoWindow(Adw.ApplicationWindow):
 
         self.listbox.connect("row-selected", self._on_row_selected)
         self.listbox.select_row(self.listbox.get_row_at_index(0))
+
+        # A1: polling do status do daemon a cada 3s para atualizar indicador
+        from gi.repository import GLib
+
+        self._update_daemon_status()  # primeira chamada imediata
+        GLib.timeout_add_seconds(3, self._update_daemon_status_periodic)
+
+    def _update_daemon_status_periodic(self) -> bool:
+        """Callback do GLib timeout — sempre retorna True para manter polling."""
+        self._update_daemon_status()
+        return True  # keep timer
+
+    def _update_daemon_status(self) -> None:
+        """Atualiza indicador visual baseado em is_daemon_alive() (A1)."""
+        from .. import client as client_mod
+
+        try:
+            alive = client_mod.is_daemon_alive()
+        except Exception:
+            alive = False
+
+        if alive:
+            self.daemon_status_label.set_label("●")
+            self.daemon_status_label.set_tooltip_text("Daemon: ativo")
+            self.daemon_status_label.remove_css_class("error")
+            self.daemon_status_label.remove_css_class("dim-label")
+            self.daemon_status_label.add_css_class("success")
+        else:
+            self.daemon_status_label.set_label("●")
+            self.daemon_status_label.set_tooltip_text("Daemon: inativo (clique no menu para iniciar)")
+            self.daemon_status_label.remove_css_class("success")
+            self.daemon_status_label.remove_css_class("dim-label")
+            self.daemon_status_label.add_css_class("error")
 
     def _on_row_selected(self, _listbox: Gtk.ListBox, row: Gtk.ListBoxRow) -> None:
         if not row:
@@ -287,6 +344,8 @@ class RecordoApp(Adw.Application):
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
         self.create_action("about", self._show_about)
         self.create_action("quit-daemon", self._quit_daemon)
+        self.create_action("start-daemon", self._start_daemon)
+        self.create_action("restart-daemon", self._restart_daemon)
         self.create_action("reload-config", self._reload_config)
         self.window: RecordoWindow | None = None
 
@@ -336,8 +395,84 @@ class RecordoApp(Adw.Application):
         def on_resp(resp: dict) -> None:
             if self.window:
                 self.window.toast(f"Daemon: {resp.get('shutting_down') or resp.get('error', '?')}")
+                # Atualiza indicador imediato (não esperar o polling 3s)
+                from gi.repository import GLib
+
+                GLib.timeout_add(500, lambda: (self.window._update_daemon_status(), False)[1])
 
         call_async("quit", on_resp)
+
+    def _start_daemon(self, *_):
+        """A1: inicia daemon via client.ensure_daemon (systemd ou spawn)."""
+        from gi.repository import GLib
+
+        from .. import client as client_mod
+
+        if not self.window:
+            return
+
+        if client_mod.is_daemon_alive():
+            self.window.toast("Daemon já está ativo")
+            return
+
+        self.window.toast("Iniciando daemon...")
+
+        def _do_start():
+            ok = client_mod.ensure_daemon()
+            GLib.idle_add(self._on_daemon_started, ok)
+            return False  # remove from idle queue
+
+        # Off main loop para não bloquear UI
+        import threading
+
+        threading.Thread(target=_do_start, daemon=True).start()
+
+    def _on_daemon_started(self, ok: bool) -> None:
+        if not self.window:
+            return
+        if ok:
+            self.window.toast("✓ Daemon iniciado")
+        else:
+            self.window.toast("⚠ Falha ao iniciar daemon — veja logs")
+        self.window._update_daemon_status()
+
+    def _restart_daemon(self, *_):
+        """A1: encerra daemon, espera, reinicia."""
+        from gi.repository import GLib
+
+        from .. import client as client_mod
+        from .async_client import call_async
+
+        if not self.window:
+            return
+
+        self.window.toast("Reiniciando daemon...")
+
+        def on_quit_resp(_resp: dict) -> None:
+            # Aguarda 1.5s para o socket sumir, depois ensure_daemon
+            def _do_restart():
+                import time
+
+                # Espera socket fechar (até 5s)
+                for _ in range(20):
+                    if not client_mod.is_daemon_alive():
+                        break
+                    time.sleep(0.25)
+                ok = client_mod.ensure_daemon()
+                GLib.idle_add(self._on_daemon_restarted, ok)
+                return False
+
+            import threading
+
+            threading.Thread(target=_do_restart, daemon=True).start()
+
+        call_async("quit", on_quit_resp)
+
+    def _on_daemon_restarted(self, ok: bool) -> None:
+        if not self.window:
+            return
+        self.window.toast("✓ Daemon reiniciado" if ok else "⚠ Falha no restart")
+        self.window._update_daemon_status()
 
     def _reload_config(self, *_):
         from .async_client import call_async
