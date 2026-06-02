@@ -193,8 +193,8 @@ libopus.
   comportamento de watchdogs e auto-detect.
 - Bindings sempre visíveis no Footer; banner `?` no topo.
 
-`recordo -a` (modo standalone Rich Live) é mantido para compatibilidade
-mas dispara `DeprecationWarning` na entrada de `run_tui`/`run_plain`.
+Modo standalone CLI (`-a`) foi removido em v0.2 — sempre use o
+daemon (auto-spawn via `--tui`/`--gui` é transparente).
 
 ### 11. GUI calls async
 

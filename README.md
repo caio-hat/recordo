@@ -71,7 +71,6 @@ Setup auto-instala via apt: `ffmpeg`, `pulseaudio-utils` (inclui `parec` usado p
 | GUI desktop (GTK4) | `recordo --gui` — sidebar + páginas |
 | Listar dispositivos | `recordo --list-devices` |
 | Recarregar config | `recordo --reload-config` (sem restart do daemon) |
-| Modo CLI standalone (legacy) | `recordo -a` (Rich TUI sem daemon, deprecated) |
 
 A TUI Textual é a forma recomendada de interagir pelo terminal: painéis live de status, dispositivos detectados e últimas gravações; help completo via `?`. Atalhos: `r` toggle, `m` marcar, `s` parar, `R` reload config, `q` sair.
 

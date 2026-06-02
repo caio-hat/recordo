@@ -21,18 +21,7 @@ from .config import (
     setup_logging,
 )
 from .daemon import Daemon
-from .recorder import (
-    Recorder,
-    SessionState,
-    acquire_lock,
-    find_resumable,
-    install_signals,
-    make_session,
-    set_recorder_ref,
-    write_report,
-)
-from .sources import AudioSource, auto_pick, list_sources
-from .tui import run_plain, run_tui
+from .sources import AudioSource, list_sources
 
 log = logging.getLogger(__name__)
 console = Console(stderr=True)
@@ -243,64 +232,22 @@ def _run_daemon(args: argparse.Namespace) -> int:
 
 
 def _run_standalone(args: argparse.Namespace) -> int:
-    """Modo CLI interativo (sem daemon) — Rich TUI ou plain."""
-    sources = list_sources()
+    """Modo standalone deprecado (B6). Orienta usar --daemon/--gui/--tui."""
     if args.list_devices:
+        sources = list_sources()
         _print_devices(sources)
         return 0
 
-    if args.resume:
-        prev = find_resumable(args.output_dir)
-        if not prev:
-            console.print("[yellow]Nenhuma sessão para retomar.[/yellow]")
-            return 1
-        console.print(f"[cyan]Retomando sessão:[/cyan] {prev}")
-        state = SessionState.load(prev)
-    else:
-        mic, sys_ = args.mic, args.sys_src
-        if args.auto or (not mic or not sys_):
-            am, asys = auto_pick(sources)
-            mic = mic or am
-            sys_ = sys_ or asys
-            if not mic or not sys_:
-                console.print("[yellow]Auto-detect incompleto — seleção interativa.[/yellow]")
-                mic, sys_ = _interactive_pick(sources)
-            else:
-                console.print(f"[green]Auto:[/green] mic=[cyan]{mic}[/cyan]  sys=[cyan]{sys_}[/cyan]")
-        subject = args.subject or Console().input("[bold]Assunto da gravação:[/bold] ").strip() or "Gravacao"
-        state = make_session(
-            subject, mic, sys_, bitrate=args.bitrate, layout=args.layout, base_dir=args.output_dir
-        )
-        state.save()
-
-    acquire_lock()
-    install_signals()
-
-    rec = Recorder(state, max_segment=args.max_segment, layout=state.layout)
-    set_recorder_ref(rec)
-
-    if args.no_tui:
-        run_plain(rec)
-    else:
-        run_tui(rec)
-
-    final = rec.finalize()
-    write_report(state, final)
-
-    if final:
-        console.print(f"\n[bold green]✓ Final:[/bold green] {final}")
-    else:
-        console.print("\n[yellow]Nenhum áudio válido gravado.[/yellow]")
-
-    if args.transcribe and final:
-        try:
-            from .pipeline import transcribe
-
-            transcribe(final, model_size=args.whisper_model, language=args.language)
-        except Exception as e:
-            log.exception("falha na transcrição: %s", e)
-            console.print(f"[red]Erro na transcrição:[/red] {e}")
-    return 0
+    console.print(
+        "[yellow]Modo CLI standalone (-a/--auto sem daemon) foi removido em v0.2.[/yellow]\n"
+        "Use uma das opções abaixo:\n\n"
+        "  [bold]recordo --tui[/bold]     TUI moderna Textual (auto-conecta no daemon)\n"
+        "  [bold]recordo --gui[/bold]     GUI desktop GTK4 + libadwaita\n"
+        "  [bold]recordo --daemon[/bold]  Roda daemon explicitamente\n"
+        "  [bold]recordo --toggle[/bold]  Toggle gravação no daemon ativo\n\n"
+        "Para ajuda completa:  [bold]recordo --help[/bold]"
+    )
+    return 1
 
 
 def main() -> int:

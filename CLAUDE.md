@@ -56,7 +56,7 @@ recordo/
 
 1. **Daemon** (`recordo --daemon`): asyncio loop, escuta socket UNIX. Iniciado por systemd user unit.
 2. **Client** (`recordo --toggle|--status|--mark|--stop|--quit-daemon`): conecta socket, envia JSON, imprime resposta.
-3. **Standalone CLI** (`recordo -s "Subject" -a`): Rich TUI sem daemon, leitura de teclas via termios cbreak.
+
 
 ## Comandos do daemon (JSON-lines)
 
