@@ -43,3 +43,4 @@ Thumbs.db
 
 # Local config (user-specific)
 .envrc
+package-lock.json
