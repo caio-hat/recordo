@@ -14,6 +14,7 @@ from gi.repository import Adw, Gdk, Gio, Gtk  # noqa: E402
 
 from .. import __version__  # noqa: E402
 from .page_control import ControlPage  # noqa: E402
+from .page_models import ModelsPage  # noqa: E402
 from .page_settings import SettingsPage  # noqa: E402
 from .page_status import StatusPage  # noqa: E402
 from .page_transcribe import TranscribePage  # noqa: E402
@@ -162,6 +163,7 @@ class RecordoWindow(Adw.ApplicationWindow):
             ("media-record-symbolic", "Status", "status", "Indicador live + tempo"),
             ("media-playback-start-symbolic", "Controle", "control", "Iniciar/parar/marcar"),
             ("document-edit-symbolic", "Transcrever", "transcribe", "Re-transcrever notas"),
+            ("application-x-addon-symbolic", "Modelos", "models", "Baixar/remover modelos"),
             ("emblem-system-symbolic", "Configurações", "settings", "Backends + API keys"),
         ]
         for icon, label, tag, _subtitle in sidebar_items:
@@ -208,11 +210,13 @@ class RecordoWindow(Adw.ApplicationWindow):
         self.control_page = ControlPage(window=self)
         self.settings_page = SettingsPage(window=self)
         self.transcribe_page = TranscribePage(window=self)
+        self.models_page = ModelsPage(window=self)
 
         self.stack.add_named(self.status_page, "status")
         self.stack.add_named(self.control_page, "control")
         self.stack.add_named(self.settings_page, "settings")
         self.stack.add_named(self.transcribe_page, "transcribe")
+        self.stack.add_named(self.models_page, "models")
 
         content_page = Adw.NavigationPage()
         content_page.set_title("Recordo")

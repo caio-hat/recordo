@@ -96,6 +96,9 @@ class SettingsPage(Gtk.ScrolledWindow):
         save_btn.connect("clicked", self._on_save)
         save_group.add(save_btn)
 
+        # M2: check inicial do modelo configurado vs disco
+        self._check_model_hint()
+
     # ── Builders ───────────────────────────────────────────────────────────
     def _build_recording_group(self, prefs: Adw.PreferencesPage) -> None:
         rec_group = Adw.PreferencesGroup(title="🎙 Gravação")
@@ -153,6 +156,18 @@ class SettingsPage(Gtk.ScrolledWindow):
         if cur_backend in TRANSCRIBE_BACKENDS:
             self.tr_backend_row.set_selected(TRANSCRIBE_BACKENDS.index(cur_backend))
         tr_group.add(self.tr_backend_row)
+
+        # M2: Hint contextual se backend não tem modelo baixado
+        self.tr_model_hint_row = Adw.ActionRow()
+        self.tr_model_hint_row.set_visible(False)
+        self.tr_model_hint_row.add_css_class("warning")
+        hint_btn = Gtk.Button(label="🔽 Abrir Models Manager", valign=Gtk.Align.CENTER)
+        hint_btn.add_css_class("suggested-action")
+        hint_btn.connect("clicked", self._on_open_models_page)
+        self.tr_model_hint_row.add_suffix(hint_btn)
+        tr_group.add(self.tr_model_hint_row)
+        # Conectar para atualizar hint quando backend muda
+        self.tr_backend_row.connect("notify::selected", self._on_backend_changed)
 
         self.lang_row = Adw.EntryRow(title="Idioma (ISO 639-1)")
         self.lang_row.set_text(self.cfg["transcriber"]["language"])
@@ -441,6 +456,65 @@ class SettingsPage(Gtk.ScrolledWindow):
         self._sum_compat_group.set_visible(sel == "openai_compat")
         self._sum_azure_group.set_visible(sel == "azure_openai")
         self._sum_heuristic_group.set_visible(sel == "heuristic")
+
+    def _on_backend_changed(self, *_args) -> None:
+        """M2: chamado quando user muda combobox de backend."""
+        self._check_model_hint()
+
+    def _check_model_hint(self) -> None:
+        """M2: mostra hint se backend selecionado tem modelo não baixado."""
+        from ..models import (
+            is_parakeet_installed,
+            is_whisper_installed,
+        )
+        from ..models_registry import (
+            PARAKEET_MODELS,
+            WHISPER_MODELS,
+        )
+
+        sel_backend = TRANSCRIBE_BACKENDS[self.tr_backend_row.get_selected()]
+
+        # Determina modelo configurado conforme backend
+        if sel_backend == "whisper":
+            model_short = self.cfg["transcriber"]["whisper"].get("model", "large-v3-turbo")
+            info = WHISPER_MODELS.get(model_short)
+            installed = is_whisper_installed(info.full_id) if info else False
+            backend_label = "Whisper"
+        elif sel_backend == "parakeet":
+            model_full = self.cfg["transcriber"]["parakeet"].get("model", "nvidia/parakeet-tdt-0.6b-v3")
+            # Match em PARAKEET_MODELS pelo full_id
+            info = next((v for v in PARAKEET_MODELS.values() if v.full_id == model_full), None)
+            installed = is_parakeet_installed(model_full) if info else False
+            backend_label = "Parakeet"
+        elif sel_backend == "cohere":
+            # Cohere é API, sem download
+            self.tr_model_hint_row.set_visible(False)
+            return
+        else:
+            self.tr_model_hint_row.set_visible(False)
+            return
+
+        if installed:
+            self.tr_model_hint_row.set_visible(False)
+        else:
+            model_name = info.short_name if info else model_short  # noqa: F841
+            self.tr_model_hint_row.set_title(f"⚠ Modelo {backend_label} não baixado")
+            self.tr_model_hint_row.set_subtitle(
+                "O modelo configurado não está em disco. Baixe via Models Manager para usar este backend."
+            )
+            self.tr_model_hint_row.set_visible(True)
+
+    def _on_open_models_page(self, _btn) -> None:
+        """M2: navega para aba Models na sidebar."""
+        try:
+            row = self.window.listbox.get_first_child()
+            while row is not None:
+                if getattr(row, "tag", None) == "models":
+                    self.window.listbox.select_row(row)
+                    return
+                row = row.get_next_sibling()
+        except Exception:
+            log.exception("falha navegar para Models Manager")
 
     def _build_pipeline_group(self, prefs: Adw.PreferencesPage) -> None:
         """A2: Configurações do pipeline (auto_run + steps automáticos)."""
