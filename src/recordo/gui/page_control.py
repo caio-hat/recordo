@@ -31,35 +31,46 @@ class ControlPage(Gtk.Box):
         )
         self.window = window
 
-        # ── Botões ───────────────────────────────────────────────────────────
+        # ── C5: Botões consolidados (state-aware) ────────────────────────────
         btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12, halign=Gtk.Align.CENTER)
         self.append(btn_box)
 
-        self.btn_toggle = Gtk.Button(label="● Iniciar / Parar")
+        # Botão principal grande estado-aware (substitui Toggle + Stop redundantes)
+        self.btn_toggle = Gtk.Button()
+        toggle_inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.btn_toggle_icon = Gtk.Image.new_from_icon_name("media-record-symbolic")
+        self.btn_toggle_label = Gtk.Label(label="Iniciar gravação")
+        toggle_inner.append(self.btn_toggle_icon)
+        toggle_inner.append(self.btn_toggle_label)
+        self.btn_toggle.set_child(toggle_inner)
         self.btn_toggle.set_tooltip_text(
-            "Alterna gravação (start se idle, stop se ativa). Equivalente ao atalho Super+R."
+            "Inicia ou para a gravação. Equivalente ao atalho global Super+R. "
+            "O texto e ícone mudam conforme o estado atual do daemon."
         )
         self.btn_toggle.add_css_class("pill")
         self.btn_toggle.add_css_class("suggested-action")
+        self.btn_toggle.set_size_request(220, 56)
         self.btn_toggle.connect("clicked", self._on_toggle)
         btn_box.append(self.btn_toggle)
 
-        self.btn_mark = Gtk.Button(label="📍 Marcar")
+        # Botão Marcar (visível apenas durante gravação)
+        self.btn_mark = Gtk.Button()
+        mark_inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        mark_inner.append(Gtk.Image.new_from_icon_name("starred-symbolic"))
+        mark_inner.append(Gtk.Label(label="Marcar momento"))
+        self.btn_mark.set_child(mark_inner)
         self.btn_mark.set_tooltip_text(
-            "Registra timestamp + nota opcional na gravação atual. Equivalente ao atalho Super+Shift+M."
+            "Registra timestamp + nota opcional. Equivalente ao atalho Super+Shift+M. "
+            "Disponível apenas durante gravação ativa."
         )
         self.btn_mark.add_css_class("pill")
+        self.btn_mark.set_visible(False)  # só aparece durante gravação
         self.btn_mark.connect("clicked", self._on_mark)
         btn_box.append(self.btn_mark)
 
-        self.btn_stop = Gtk.Button(label="⏹ Parar")
-        self.btn_stop.set_tooltip_text(
-            "Encerra gravação ativa, faz merge dos segmentos e dispara transcrição em background."
-        )
-        self.btn_stop.add_css_class("pill")
-        self.btn_stop.add_css_class("destructive-action")
-        self.btn_stop.connect("clicked", self._on_stop)
-        btn_box.append(self.btn_stop)
+        # Polling de status para atualizar botões state-aware
+        self._refresh_button_state()
+        GLib.timeout_add_seconds(2, self._refresh_button_state_periodic)
 
         # ── Lista de gravações ───────────────────────────────────────────────
         listing_title = Gtk.Label(xalign=0)
@@ -85,8 +96,9 @@ class ControlPage(Gtk.Box):
 
     def _on_socket_response_with_refresh(self, resp: dict) -> None:
         self.btn_toggle.set_sensitive(True)
-        self.btn_stop.set_sensitive(True)
         self.window.toast(self._fmt(resp))
+        # Refresh button state imediato (não esperar polling 2s)
+        self._refresh_button_state()
         # delay 500ms pra deixar o filesystem settle e mostrar a gravação nova
         GLib.timeout_add(500, self._populate_recordings_once)
 
@@ -116,14 +128,48 @@ class ControlPage(Gtk.Box):
         dlg.connect("response", on_response)
         dlg.present()
 
-    def _on_stop(self, _btn) -> None:
-        self.btn_stop.set_sensitive(False)
-        call_async("stop", self._on_socket_response_with_refresh_stop)
+    def _refresh_button_state_periodic(self) -> bool:
+        self._refresh_button_state()
+        return True
 
-    def _on_socket_response_with_refresh_stop(self, resp: dict) -> None:
-        self.btn_stop.set_sensitive(True)
-        self.window.toast(self._fmt(resp))
-        GLib.timeout_add(1000, self._populate_recordings_once)
+    def _refresh_button_state(self) -> None:
+        """C5: Atualiza visual do toggle baseado no daemon status."""
+        from .. import client as client_mod
+
+        try:
+            alive = client_mod.is_daemon_alive()
+            if alive:
+                resp = client_mod.send_to_daemon("status")
+                recording = bool(resp.get("recording", False))
+            else:
+                recording = False
+        except Exception:
+            recording = False
+            alive = False
+
+        if not alive:
+            self.btn_toggle_icon.set_from_icon_name("media-record-symbolic")
+            self.btn_toggle_label.set_text("Daemon offline")
+            self.btn_toggle.remove_css_class("destructive-action")
+            self.btn_toggle.add_css_class("suggested-action")
+            self.btn_toggle.set_sensitive(False)
+            self.btn_mark.set_visible(False)
+            return
+
+        self.btn_toggle.set_sensitive(True)
+
+        if recording:
+            self.btn_toggle_icon.set_from_icon_name("media-playback-stop-symbolic")
+            self.btn_toggle_label.set_text("Parar gravação")
+            self.btn_toggle.remove_css_class("suggested-action")
+            self.btn_toggle.add_css_class("destructive-action")
+            self.btn_mark.set_visible(True)
+        else:
+            self.btn_toggle_icon.set_from_icon_name("media-record-symbolic")
+            self.btn_toggle_label.set_text("Iniciar gravação")
+            self.btn_toggle.remove_css_class("destructive-action")
+            self.btn_toggle.add_css_class("suggested-action")
+            self.btn_mark.set_visible(False)
 
     @staticmethod
     def _fmt(resp: dict) -> str:
