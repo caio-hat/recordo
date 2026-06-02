@@ -116,6 +116,70 @@ preferencesgroup {
 row.entry {
     min-height: 52px;
 }
+
+/* D2: Visual consistency — typography e spacing padronizados */
+
+/* Páginas: header titles consistentes */
+.title-1 {
+    font-size: 20pt;
+    font-weight: bold;
+    margin-bottom: 4px;
+}
+.title-2 {
+    font-size: 16pt;
+    font-weight: bold;
+}
+
+/* Cards: hover sutil em ações + transition smooth */
+.card {
+    border-radius: 12px;
+    transition: all 200ms ease;
+}
+
+/* PreferencesGroup: spacing entre groups */
+preferencesgroup + preferencesgroup {
+    margin-top: 18px;
+}
+
+/* Botões em listas (action_box dentro de ActionRow): hover claro */
+listrow button.flat:hover {
+    background: alpha(@accent_bg_color, 0.15);
+}
+
+/* Success/Error labels com cor + peso visível */
+label.success {
+    color: @success_color;
+    font-weight: 500;
+}
+label.error {
+    color: @error_color;
+    font-weight: 500;
+}
+
+/* Monospace label (timestamps, log): mesma fonte sistema */
+label.monospace {
+    font-family: monospace;
+    font-size: 10pt;
+}
+
+/* TextView do log: background levemente diferente para destacar */
+.card textview {
+    background: alpha(@card_bg_color, 0.6);
+    border-radius: 8px;
+    font-size: 9pt;
+}
+
+/* Botões do toggle no Control: shadow leve */
+button.pill.suggested-action,
+button.pill.destructive-action {
+    box-shadow: 0 2px 6px alpha(@theme_fg_color, 0.15);
+}
+
+/* Highlighted segment in transcript view */
+listrow.accent {
+    background: alpha(@accent_bg_color, 0.2);
+    border-left: 3px solid @accent_color;
+}
 """
 
 
