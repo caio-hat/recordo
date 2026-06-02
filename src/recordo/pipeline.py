@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .config import NOTAS_DIR, load_config
+from .config import NOTAS_DIR, Timeouts, load_config
 from .notify import notify
 from .recorder import Mark, SessionState
 from .subject import safe_subject
@@ -91,8 +91,9 @@ def _safe_move(src: Path, dst: Path) -> None:
                 dst,
                 size_mb,
             )
-    except FileNotFoundError:
-        pass
+    except FileNotFoundError as e:
+        # B15: log explícito em vez de silently passing
+        log.warning("safe_move: stat falhou (%s) — tentando move mesmo assim", e)
     shutil.move(str(src), str(dst))
 
 
@@ -974,7 +975,7 @@ def _ffprobe_duration(path: Path) -> float | None:
             ],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=Timeouts.FFPROBE_TIMEOUT_SEC,
             check=True,
         )
         return float(r.stdout.strip())

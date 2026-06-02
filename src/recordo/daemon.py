@@ -19,6 +19,7 @@ from .config import (
     SILENCE_MAX_SECONDS,
     SILENCE_THRESHOLD_DB,
     SOCKET_PATH,
+    Timeouts,
     load_auto_detect_config,
     load_config,
 )
@@ -116,7 +117,7 @@ class Daemon:
     # ── socket handler ─────────────────────────────────────────────────────
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
-            raw = await asyncio.wait_for(reader.readline(), timeout=5)
+            raw = await asyncio.wait_for(reader.readline(), timeout=Timeouts.DAEMON_SOCKET_REQ_TIMEOUT_SEC)
             if not raw:
                 return
             try:
@@ -316,7 +317,7 @@ class Daemon:
     async def _watchdog_loop(self) -> None:
         last_silence_check = 0.0
         while True:
-            await asyncio.sleep(2)
+            await asyncio.sleep(Timeouts.DAEMON_WATCHDOG_SLEEP_SEC)
             if not self.recorder or not self.recorder.recording:
                 continue
             now = time.monotonic()
@@ -463,4 +464,4 @@ class Daemon:
                         await asyncio.wait_for(proc.wait(), timeout=2)
                     except TimeoutError:
                         proc.kill()
-            await asyncio.sleep(5)  # backoff antes de re-subscrever
+            await asyncio.sleep(Timeouts.DAEMON_PACTL_RECONNECT_SEC)  # backoff antes de re-subscrever

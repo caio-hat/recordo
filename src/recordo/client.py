@@ -10,7 +10,7 @@ import sys
 import time
 from typing import Any
 
-from .config import SOCKET_PATH
+from .config import SOCKET_PATH, Timeouts
 
 
 def send_to_daemon(cmd: str, **kwargs: Any) -> dict:
@@ -45,7 +45,7 @@ def is_daemon_alive() -> bool:
     return bool(resp.get("ok"))
 
 
-def ensure_daemon(timeout: float = 8.0, *, prefer_systemd: bool = True) -> bool:
+def ensure_daemon(timeout: float | None = None, *, prefer_systemd: bool = True) -> bool:
     """Garante daemon rodando. Idempotente.
 
     1. Se já vivo, retorna True imediatamente.
@@ -56,6 +56,8 @@ def ensure_daemon(timeout: float = 8.0, *, prefer_systemd: bool = True) -> bool:
 
     Retorna True se daemon ficou up, False se desistiu.
     """
+    if timeout is None:
+        timeout = Timeouts.CLIENT_DAEMON_BOOT_DEADLINE_SEC
     if is_daemon_alive():
         return True
 
@@ -84,15 +86,15 @@ def ensure_daemon(timeout: float = 8.0, *, prefer_systemd: bool = True) -> bool:
         # do client (pelo setsid + double-fork-like via Popen + close_fds).
         log_path = "/tmp/recordo.daemon.log"
         try:
-            log_fd = open(log_path, "ab")
-            subprocess.Popen(
-                [sys.executable, "-m", "recordo", "--daemon"],
-                stdout=log_fd,
-                stderr=log_fd,
-                stdin=subprocess.DEVNULL,
-                start_new_session=True,
-                close_fds=True,
-            )
+            with open(log_path, "ab") as log_fd:  # B3: context manager evita leak
+                subprocess.Popen(
+                    [sys.executable, "-m", "recordo", "--daemon"],
+                    stdout=log_fd,
+                    stderr=log_fd,
+                    stdin=subprocess.DEVNULL,
+                    start_new_session=True,
+                    close_fds=True,
+                )
         except OSError:
             return False
 
@@ -101,7 +103,7 @@ def ensure_daemon(timeout: float = 8.0, *, prefer_systemd: bool = True) -> bool:
     while time.monotonic() < deadline:
         if is_daemon_alive():
             return True
-        time.sleep(0.15)
+        time.sleep(Timeouts.CLIENT_DAEMON_BOOT_POLL_SEC)
     return False
 
 

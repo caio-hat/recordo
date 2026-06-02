@@ -40,6 +40,32 @@ SESSION_META = "session.json"
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
 log = logging.getLogger("recordo")
 
+
+class Timeouts:
+    """Centralized timeout/sleep constants (B12).
+
+    Substituem magic numbers espalhados em recorder/daemon/pipeline/client.
+    Cada constante tem comentário explicando o trade-off.
+    """
+
+    # ── Recorder: ffmpeg termination ──
+    # SIGINT first (graceful flush of opus container), then SIGTERM, then SIGKILL.
+    RECORDER_PROC_WAIT_SIGINT_SEC = 5  # ffmpeg costuma flushar < 2s; folga p/ disco lento
+    RECORDER_PROC_WAIT_TERM_SEC = 3  # SIGTERM rare, dá margem antes de SIGKILL
+
+    # ── Daemon background loops ──
+    DAEMON_WATCHDOG_SLEEP_SEC = 2  # checa a cada 2s; menor = CPU; maior = menos responsivo
+    DAEMON_PACTL_RECONNECT_SEC = 5  # se pactl morrer, reconecta após 5s (typical recovery)
+    DAEMON_SOCKET_REQ_TIMEOUT_SEC = 5  # request lifecycle no socket UNIX
+
+    # ── ffprobe / shell calls ──
+    FFPROBE_TIMEOUT_SEC = 10  # ffprobe é rápido; 10s pega arquivos enormes
+
+    # ── Client (CLI) → daemon boot ──
+    CLIENT_DAEMON_BOOT_POLL_SEC = 0.15  # polling interval enquanto daemon sobe
+    CLIENT_DAEMON_BOOT_DEADLINE_SEC = 8  # max espera por daemon socket aparecer
+
+
 DEFAULTS: dict[str, Any] = {
     "general": {
         "output_dir": str(DEFAULT_OUTPUT_DIR),

@@ -15,7 +15,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from .config import LOCKFILE, SESSION_META
+from .config import LOCKFILE, SESSION_META, Timeouts
 from .ffmpeg_cmds import build_capture_cmd, build_concat_cmd, build_merge_cmd
 
 log = logging.getLogger(__name__)
@@ -117,8 +117,15 @@ class Recorder:
         )
 
         log.info("iniciando segmento %d", idx)
+        # B5: se segundo Popen falhar, garantir cleanup do primeiro
         self.proc_sys = subprocess.Popen(cmd_sys, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        self.proc_mic = subprocess.Popen(cmd_mic, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        try:
+            self.proc_mic = subprocess.Popen(cmd_mic, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        except (OSError, FileNotFoundError):
+            log.exception("falha ao iniciar mic capture; matando sys capture")
+            self._terminate(self.proc_sys)
+            self.proc_sys = None
+            raise
         self.seg_start_mono = time.monotonic()
         self.recording = True
 
@@ -127,12 +134,12 @@ class Recorder:
             return
         try:
             proc.send_signal(signal.SIGINT)
-            proc.wait(timeout=5)
+            proc.wait(timeout=Timeouts.RECORDER_PROC_WAIT_SIGINT_SEC)
         except subprocess.TimeoutExpired:
             log.warning("ffmpeg pid=%s não saiu com SIGINT, mandando SIGTERM", proc.pid)
             proc.terminate()
             try:
-                proc.wait(timeout=3)
+                proc.wait(timeout=Timeouts.RECORDER_PROC_WAIT_TERM_SEC)
             except subprocess.TimeoutExpired:
                 proc.kill()
 
@@ -289,7 +296,7 @@ class Recorder:
                 ],
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=Timeouts.FFPROBE_TIMEOUT_SEC,
                 check=True,
             )
             return float(r.stdout.strip())
