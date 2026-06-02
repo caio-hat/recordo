@@ -170,28 +170,44 @@ class TranscribePage(Gtk.Box):
             self._build_recording_row(d)
 
     def _build_recording_row(self, d: Path) -> None:
-        """A3: Constrói row com badges de status + botões Transcrever/Resumir/Tasks."""
+        """A3: Constrói row com badges de status + botões Transcrever/Resumir/Tasks.
+
+        Bug fix v0.2.1: badges com largura padronizada para alinhamento consistente.
+        """
         from ..pipeline import get_recording_status
 
         row = Adw.ActionRow(title=d.name.replace("_", " "))
         row.path = d  # type: ignore[attr-defined]
 
-        # Subtitle: duração + status badges
+        # Subtitle: duração padronizada (8 chars) + status com símbolos sempre visíveis
         duration = self._read_duration(d)
+        # Pad para alinhar: "  3.2 min" (8 chars), "23.4 min", etc
+        duration_padded = f"{duration:>8s}" if duration else "    --   "
+
         status = get_recording_status(d)
-        badges = []
-        badges.append("✓ Transcrito" if status["has_transcript"] else "✗ Sem transcrição")
-        badges.append("✓ Resumo" if status["has_summary"] else "✗ Sem resumo")
-        badges.append("✓ Tarefas" if status["has_tasks"] else "✗ Sem tarefas")
-        subtitle = f"{duration} · {' · '.join(badges)}" if duration else " · ".join(badges)
+        # Bug fix: símbolos consistentes (✓ verde / ✗ cinza) com label fixo
+        # Mantém width quase igual independente do estado
+        marks = [
+            ("✓" if status["has_transcript"] else "·", "Transcrito"),
+            ("✓" if status["has_summary"] else "·", "Resumo    "),
+            ("✓" if status["has_tasks"] else "·", "Tarefas   "),
+        ]
+        badge_str = "  ".join(f"{m} {label}" for m, label in marks)
+        subtitle = f"{duration_padded}    {badge_str}"
         row.set_subtitle(subtitle)
 
-        # Suffix box com botões action
+        # Suffix box com botões action — largura fixa por botão pra alinhamento
         action_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4, valign=Gtk.Align.CENTER)
 
+        # Helper local para criar botões com largura padronizada
+        def _mk_btn(icon: str, tooltip: str) -> Gtk.Button:
+            b = Gtk.Button(icon_name=icon, tooltip_text=tooltip)
+            b.add_css_class("flat")
+            b.set_size_request(36, 32)  # Largura fixa para alinhamento
+            return b
+
         # Botão Transcrever
-        btn_t = Gtk.Button(icon_name="document-edit-symbolic", tooltip_text="Transcrever áudio")
-        btn_t.add_css_class("flat")
+        btn_t = _mk_btn("document-edit-symbolic", "Transcrever áudio")
         btn_t.connect("clicked", self._on_run_step, d, "transcribe")
         if status["has_transcript"]:
             btn_t.add_css_class("success")
@@ -199,8 +215,7 @@ class TranscribePage(Gtk.Box):
         action_box.append(btn_t)
 
         # Botão Resumir
-        btn_s = Gtk.Button(icon_name="text-x-generic-symbolic", tooltip_text="Resumir com IA")
-        btn_s.add_css_class("flat")
+        btn_s = _mk_btn("text-x-generic-symbolic", "Resumir com IA")
         btn_s.set_sensitive(status["has_transcript"])
         btn_s.connect("clicked", self._on_run_step, d, "summarize")
         if status["has_summary"]:
@@ -209,8 +224,7 @@ class TranscribePage(Gtk.Box):
         action_box.append(btn_s)
 
         # Botão Tasks
-        btn_x = Gtk.Button(icon_name="checkbox-symbolic", tooltip_text="Extrair tarefas com IA")
-        btn_x.add_css_class("flat")
+        btn_x = _mk_btn("checkbox-symbolic", "Extrair tarefas com IA")
         btn_x.set_sensitive(status["has_transcript"])
         btn_x.connect("clicked", self._on_run_step, d, "tasks")
         if status["has_tasks"]:
@@ -218,17 +232,13 @@ class TranscribePage(Gtk.Box):
             btn_x.set_tooltip_text("Re-extrair tarefas (já existe)")
         action_box.append(btn_x)
 
-        # Botão Player (C1+C2+C3+C4) — abre PlayerDialog modal
-        btn_p = Gtk.Button(
-            icon_name="media-playback-start-symbolic", tooltip_text="Reproduzir + editar transcrição"
-        )
-        btn_p.add_css_class("flat")
+        # Botão Player
+        btn_p = _mk_btn("media-playback-start-symbolic", "Reproduzir + editar transcrição")
         btn_p.connect("clicked", self._on_open_player, d)
         action_box.append(btn_p)
 
         # Botão Abrir pasta
-        btn_o = Gtk.Button(icon_name="folder-open-symbolic", tooltip_text="Abrir pasta")
-        btn_o.add_css_class("flat")
+        btn_o = _mk_btn("folder-open-symbolic", "Abrir pasta")
         btn_o.connect("clicked", self._on_open_folder, d)
         action_box.append(btn_o)
 

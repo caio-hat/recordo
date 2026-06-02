@@ -51,6 +51,7 @@ class WaveformWidget(Gtk.DrawingArea):
         self.peaks: list[float] = []
         self.position_seconds: float = 0.0
         self.marks: list[WaveformMark] = []
+        self._loading = True
 
         self.set_content_height(80)
         self.set_hexpand(True)
@@ -61,8 +62,67 @@ class WaveformWidget(Gtk.DrawingArea):
         click_gesture.connect("pressed", self._on_click)
         self.add_controller(click_gesture)
 
-        # Carrega peaks (background-friendly — bloqueia primeiro start mas cache rápido)
-        self._load_peaks()
+        # Bug fix v0.2.1: peaks em background thread (não bloqueia abertura do modal)
+        import threading
+
+        threading.Thread(
+            target=self._load_peaks_thread,
+            daemon=True,
+            name=f"recordo-peaks-{audio_path.stem}",
+        ).start()
+
+    def _load_peaks_thread(self) -> None:
+        """Background: extract/load peaks + queue redraw via GLib.idle_add."""
+        from gi.repository import GLib
+
+        cache_file = self.audio_path.parent / PEAKS_CACHE
+        peaks: list[float] = []
+        cached_duration = 0.0
+
+        # Try cache first
+        if cache_file.exists():
+            try:
+                data = json.loads(cache_file.read_text())
+                if data.get("audio") == self.audio_path.name and len(data.get("peaks", [])) == N_BUCKETS:
+                    peaks = data["peaks"]
+                    cached_duration = data.get("duration", 0.0)
+                    log.debug("waveform: peaks carregados do cache (%s)", cache_file)
+            except (json.JSONDecodeError, OSError) as e:
+                log.warning("cache peaks corrompido: %s", e)
+
+        if not peaks:
+            # Extract via ffmpeg (slow path)
+            peaks = _extract_peaks_ffmpeg(self.audio_path, N_BUCKETS)
+            if peaks:
+                # Cache
+                try:
+                    duration = (
+                        self.duration if self.duration > 0 else _ffprobe_duration(self.audio_path) or 0.0
+                    )
+                    cache_file.write_text(
+                        json.dumps(
+                            {
+                                "audio": self.audio_path.name,
+                                "duration": duration,
+                                "peaks": peaks,
+                            }
+                        )
+                    )
+                    cached_duration = duration
+                    log.debug("waveform: peaks cacheados em %s", cache_file)
+                except OSError as e:
+                    log.warning("falha cache peaks: %s", e)
+
+        # Update UI in main thread
+        def _commit():
+            self.peaks = peaks
+            if cached_duration > 0 and self.duration <= 0:
+                self.duration = cached_duration
+            self._loading = False
+            self.queue_draw()
+            return False
+
+        GLib.idle_add(_commit)
 
     def set_position(self, seconds: float) -> None:
         """Update posição atual (vinda do AudioPlayer)."""
@@ -77,48 +137,23 @@ class WaveformWidget(Gtk.DrawingArea):
         self.marks.append(mark)
         self.queue_draw()
 
-    def _load_peaks(self) -> None:
-        """Carrega peaks do cache .peaks.json ou extrai via ffmpeg."""
-        cache_file = self.audio_path.parent / PEAKS_CACHE
-        if cache_file.exists():
-            try:
-                data = json.loads(cache_file.read_text())
-                if data.get("audio") == self.audio_path.name and len(data.get("peaks", [])) == N_BUCKETS:
-                    self.peaks = data["peaks"]
-                    if self.duration <= 0:
-                        self.duration = data.get("duration", 0.0)
-                    log.debug("waveform: peaks carregados do cache (%s)", cache_file)
-                    return
-            except (json.JSONDecodeError, OSError) as e:
-                log.warning("cache peaks corrompido: %s", e)
-
-        # Extract via ffmpeg
-        peaks = _extract_peaks_ffmpeg(self.audio_path, N_BUCKETS)
-        if peaks:
-            self.peaks = peaks
-            # Cachear
-            try:
-                cache_file.write_text(
-                    json.dumps(
-                        {
-                            "audio": self.audio_path.name,
-                            "duration": self.duration,
-                            "peaks": peaks,
-                        }
-                    )
-                )
-                log.debug("waveform: peaks cacheados em %s", cache_file)
-            except OSError as e:
-                log.warning("falha cache peaks: %s", e)
-        else:
-            log.warning("waveform: peaks indisponíveis (ffmpeg falhou ou ausente)")
-
     def _on_draw(self, _area, ctx, width, height):
         """Cairo render das barras + linha de posição + pinos."""
         # Background
         ctx.set_source_rgba(0.96, 0.96, 0.96, 1.0)
         ctx.rectangle(0, 0, width, height)
         ctx.fill()
+
+        # Loading state
+        if self._loading:
+            ctx.set_source_rgba(0.5, 0.5, 0.5, 1.0)
+            ctx.select_font_face("Sans", 0, 0)
+            ctx.set_font_size(11)
+            text = "⏳ Extraindo peaks da waveform…"
+            extents = ctx.text_extents(text)
+            ctx.move_to((width - extents.width) / 2, height / 2)
+            ctx.show_text(text)
+            return
 
         if not self.peaks:
             # Render placeholder text

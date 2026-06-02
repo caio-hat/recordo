@@ -180,6 +180,14 @@ listrow.accent {
     background: alpha(@accent_bg_color, 0.2);
     border-left: 3px solid @accent_color;
 }
+
+/* Bug fix v0.2.1: subtitle de Adw.ActionRow com fonte monoespaçada
+   para alinhamento consistente das badges de status nas gravações */
+.transcribe-page row.action subtitle,
+row.action subtitle {
+    font-family: monospace;
+    font-size: 9pt;
+}
 """
 
 

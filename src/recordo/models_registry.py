@@ -104,23 +104,48 @@ PARAKEET_MODELS: dict[str, ModelInfo] = {
 
 
 # Ollama models — nomes oficiais via 'ollama pull <name>'
+# Atualizado 2026-06: Gemma 4 (Apr/2026) é o atual; Gemma 3 (Mar/2025) ainda válido
 # Sizes baseadas em ollama.com/library snapshots (2026-06)
 OLLAMA_MODELS: dict[str, ModelInfo] = {
-    "gemma2:2b": ModelInfo(
-        short_name="gemma2:2b",
-        full_id="gemma2:2b",
-        size_bytes=int(1.6 * 1024**3),
-        languages="pt-BR forte, multilingual",
-        description="Recomendado: rápido em CPU, ótimo para resumos curtos",
+    # Gemma 4 (Google DeepMind, Apr 2026) — atual
+    "gemma4:e2b": ModelInfo(
+        short_name="gemma4:e2b",
+        full_id="gemma4:e2b",
+        size_bytes=int(1.5 * 1024**3),
+        languages="pt-BR forte, multimodal, multilingual",
+        description="Recomendado: Gemma 4 E2B (efficient, ~1.5GB), frontier-level perf",
         recommended=True,
     ),
-    "gemma2:9b": ModelInfo(
-        short_name="gemma2:9b",
-        full_id="gemma2:9b",
-        size_bytes=int(5.4 * 1024**3),
-        languages="pt-BR excelente",
-        description="Mais qualidade que 2b, exige 8GB+ RAM",
+    "gemma4:e4b": ModelInfo(
+        short_name="gemma4:e4b",
+        full_id="gemma4:e4b",
+        size_bytes=int(2.6 * 1024**3),
+        languages="pt-BR excelente, multimodal",
+        description="Gemma 4 E4B, melhor que E2B, ~3GB RAM",
     ),
+    "gemma4:31b": ModelInfo(
+        short_name="gemma4:31b",
+        full_id="gemma4:31b",
+        size_bytes=(19 * 1024**3),
+        languages="pt-BR SOTA, multimodal",
+        description="Gemma 4 31B, exige 24GB+ RAM/VRAM, qualidade máxima",
+    ),
+    # Gemma 3 (legacy mas ainda funcional)
+    "gemma3:4b": ModelInfo(
+        short_name="gemma3:4b",
+        full_id="gemma3:4b",
+        size_bytes=int(2.5 * 1024**3),
+        languages="pt-BR forte, multimodal",
+        description="Gemma 3 4B (mar/2025), equilíbrio razoável",
+    ),
+    "gemma3:12b": ModelInfo(
+        short_name="gemma3:12b",
+        full_id="gemma3:12b",
+        size_bytes=int(8.1 * 1024**3),
+        languages="pt-BR excelente, multimodal",
+        description="Gemma 3 12B, exige 12GB+ RAM",
+    ),
+    # Qwen 2.5 (Alibaba) — bom para function calling
     "qwen2.5:3b": ModelInfo(
         short_name="qwen2.5:3b",
         full_id="qwen2.5:3b",
@@ -128,6 +153,7 @@ OLLAMA_MODELS: dict[str, ModelInfo] = {
         languages="pt-BR razoável, suporta tools",
         description="Suporta tool/function calling para automação",
     ),
+    # Llama 3.2 (Meta)
     "llama3.2:3b": ModelInfo(
         short_name="llama3.2:3b",
         full_id="llama3.2:3b",
@@ -142,6 +168,7 @@ OLLAMA_MODELS: dict[str, ModelInfo] = {
         languages="Multilingual",
         description="Llama 3.1 8B, qualidade alta",
     ),
+    # Phi 3.5 (Microsoft)
     "phi3.5:3.8b": ModelInfo(
         short_name="phi3.5:3.8b",
         full_id="phi3.5:3.8b",

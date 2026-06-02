@@ -278,19 +278,25 @@ class SettingsPage(Gtk.ScrolledWindow):
         buf.set_text(wh_cfg.get("initial_prompt", ""), -1)
         scrolled.set_child(self.whisper_prompt_textview)
 
-        # ActionRow content area: empilha o ScrolledWindow abaixo
-        # Workaround: usa Adw.PreferencesRow direto via Box
-        prompt_box_outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        prompt_box_outer.append(prompt_row)
-        prompt_box_outer.append(scrolled)
-        # Como Adw.PreferencesGroup só aceita ActionRow/SwitchRow/etc, vamos
-        # usar set_child diretamente no group via add() do prompt_row primeiro,
-        # depois um group separado pro scrolled
+        # Bug fix v0.2.1: NÃO criar prompt_box_outer (adicionar widget a Box e
+        # depois ao group causava 'gtk_widget_get_parent (child) == NULL' assertion)
+        # Adicionar prompt_row direto no _whisper_group:
         self._whisper_group.add(prompt_row)
-        # Criar group separado pra TextView (rolavel)
-        self._whisper_prompt_group = Adw.PreferencesGroup()
-        self._whisper_prompt_group.add(scrolled)
-        prefs.add(self._whisper_prompt_group)
+
+        # Group separado SÓ para o ScrolledWindow (que precisa estar fora do
+        # Adw.PreferencesGroup nativo pq Group exige ActionRow children)
+        # Usar Gtk.Box direto wrapping o scrolled — não é um PreferencesGroup
+        self._whisper_prompt_group = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self._whisper_prompt_group.append(scrolled)
+        # Anexar ao final do prefs page como child direto
+        # (Adw.PreferencesPage aceita Gtk widgets via append no listbox interno
+        # ou usando set_child de Adw.PreferencesPage no caso geral)
+        # Workaround: usamos um group do Adw que aceita Gtk.Box:
+        wrapper_group = Adw.PreferencesGroup()
+        wrapper_group.add(self._whisper_prompt_group)
+        prefs.add(wrapper_group)
+        # Sync visibility: quando _whisper_group esconde, esconde o wrapper
+        self._whisper_prompt_wrapper = wrapper_group
 
         # Para compatibilidade com código antigo que lia .get_text(), expomos
         # um proxy property
@@ -344,7 +350,7 @@ class SettingsPage(Gtk.ScrolledWindow):
         """Mostra apenas o group do backend selecionado."""
         sel = TRANSCRIBE_BACKENDS[self.tr_backend_row.get_selected()]
         self._whisper_group.set_visible(sel == "whisper")
-        self._whisper_prompt_group.set_visible(sel == "whisper")
+        self._whisper_prompt_wrapper.set_visible(sel == "whisper")
         self._parakeet_group.set_visible(sel == "parakeet")
         self._cohere_group.set_visible(sel == "cohere")
 
@@ -550,7 +556,11 @@ class SettingsPage(Gtk.ScrolledWindow):
         self._check_model_hint()
 
     def _check_model_hint(self) -> None:
-        """M2: mostra hint se backend selecionado tem modelo não baixado."""
+        """M2: mostra hint se backend selecionado tem modelo não baixado.
+
+        Bug fix v0.2.1: aceita HuggingFace IDs custom (ex: jlondonobo/whisper-large-v2-pt)
+        que não estão no registry. Detecta via is_whisper_installed direto no HF cache.
+        """
         from ..models import (
             is_parakeet_installed,
             is_whisper_installed,
@@ -562,35 +572,48 @@ class SettingsPage(Gtk.ScrolledWindow):
 
         sel_backend = TRANSCRIBE_BACKENDS[self.tr_backend_row.get_selected()]
 
-        # Determina modelo configurado conforme backend
-        if sel_backend == "whisper":
-            model_short = self.cfg["transcriber"]["whisper"].get("model", "large-v3-turbo")
-            info = WHISPER_MODELS.get(model_short)
-            installed = is_whisper_installed(info.full_id) if info else False
-            backend_label = "Whisper"
-        elif sel_backend == "parakeet":
-            model_full = self.cfg["transcriber"]["parakeet"].get("model", "nvidia/parakeet-tdt-0.6b-v3")
-            # Match em PARAKEET_MODELS pelo full_id
-            info = next((v for v in PARAKEET_MODELS.values() if v.full_id == model_full), None)
-            installed = is_parakeet_installed(model_full) if info else False
-            backend_label = "Parakeet"
-        elif sel_backend == "cohere":
+        if sel_backend == "cohere":
             # Cohere é API, sem download
             self.tr_model_hint_row.set_visible(False)
             return
+
+        if sel_backend == "whisper":
+            model_short_or_id = self.cfg["transcriber"]["whisper"].get("model", "large-v3-turbo")
+            info = WHISPER_MODELS.get(model_short_or_id)
+            if info:
+                # Modelo do registry (Systran/...)
+                installed = is_whisper_installed(info.full_id)
+                model_display = info.short_name
+            else:
+                # Modelo custom (HF ID direto, ex: jlondonobo/whisper-large-v2-pt)
+                # is_whisper_installed aceita full HF ID
+                installed = is_whisper_installed(model_short_or_id)
+                model_display = model_short_or_id
+            backend_label = "Whisper"
+        elif sel_backend == "parakeet":
+            model_full = self.cfg["transcriber"]["parakeet"].get("model", "nvidia/parakeet-tdt-0.6b-v3")
+            info = next((v for v in PARAKEET_MODELS.values() if v.full_id == model_full), None)
+            installed = is_parakeet_installed(model_full)
+            model_display = info.short_name if info else model_full
+            backend_label = "Parakeet"
         else:
             self.tr_model_hint_row.set_visible(False)
             return
 
         if installed:
             self.tr_model_hint_row.set_visible(False)
+            return
+
+        # Modelo não instalado: mostra warning + sugestão
+        self.tr_model_hint_row.set_title(f"⚠ Modelo {backend_label} '{model_display}' não baixado")
+        if info:
+            self.tr_model_hint_row.set_subtitle("Baixe via Models Manager para usar este backend.")
         else:
-            model_name = info.short_name if info else model_short  # noqa: F841
-            self.tr_model_hint_row.set_title(f"⚠ Modelo {backend_label} não baixado")
+            # Custom HF ID que não está no Models Manager
             self.tr_model_hint_row.set_subtitle(
-                "O modelo configurado não está em disco. Baixe via Models Manager para usar este backend."
+                f"Modelo HuggingFace custom — baixe manualmente: huggingface-cli download {model_display}"
             )
-            self.tr_model_hint_row.set_visible(True)
+        self.tr_model_hint_row.set_visible(True)
 
     def _on_open_models_page(self, _btn) -> None:
         """M2: navega para aba Models na sidebar."""
@@ -905,22 +928,28 @@ class SettingsPage(Gtk.ScrolledWindow):
         # Build detailed dialog
         title = f"{icon} Teste {backend.upper()} {'concluído' if ok else 'FALHOU'}"
 
+        # Bug fix v0.2.1: usar pango markup (`<b>`) ao invés de markdown (`**`)
+        # Adw.MessageDialog não interpreta markdown
+        from html import escape
+
         body_lines = [
-            f"**Servidor/Endpoint testado:** {test_target}",
-            f"**Backend:** {backend}",
-            f"**Latência total:** {latency_ms} ms",
+            f"<b>Servidor/Endpoint testado:</b> {escape(test_target)}",
+            f"<b>Backend:</b> {escape(backend)}",
+            f"<b>Latência total:</b> {latency_ms} ms",
         ]
         if ok:
-            body_lines.append("**Status:** ✓ Provider respondeu corretamente")
+            body_lines.append("<b>Status:</b> ✓ Provider respondeu corretamente")
             if sample_response:
-                body_lines.append(f"\n**Resposta sample (primeiros 300 chars):**\n{sample_response}")
+                escaped = escape(sample_response)
+                body_lines.append(f"\n<b>Resposta sample (primeiros 300 chars):</b>\n{escaped}")
         else:
-            body_lines.append("**Status:** ✗ Erro")
-            body_lines.append(f"**Mensagem:** {error_msg[:500]}")
+            body_lines.append("<b>Status:</b> ✗ Erro")
+            body_lines.append(f"<b>Mensagem:</b> {escape(error_msg[:500])}")
 
         body = "\n\n".join(body_lines)
 
         dlg = Adw.MessageDialog.new(self.window, title, body)
+        dlg.set_body_use_markup(True)
         dlg.add_response("close", "Fechar")
         dlg.set_default_response("close")
         dlg.set_close_response("close")

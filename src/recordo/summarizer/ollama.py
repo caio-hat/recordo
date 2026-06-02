@@ -31,7 +31,7 @@ from .base import Summarizer, SummaryResult
 
 log = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gemma2:2b"
+DEFAULT_MODEL = "gemma4:e2b"
 DEFAULT_HOST = "http://localhost:11434"
 DEFAULT_TIMEOUT = 120  # segundos — modelos pequenos respondem em <30s
 

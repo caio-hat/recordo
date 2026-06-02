@@ -126,8 +126,8 @@ class Daemon:
     def _maybe_spawn_tray(self) -> None:
         """Spawna 'recordo --tray' como subprocess detached se config permitir.
 
-        Não bloqueia: tray roda independente. Daemon mantém PID em
-        self._tray_proc para cleanup no shutdown.
+        Bug fix v0.2.1: usa PID file em XDG_RUNTIME_DIR para detection robusta,
+        evitando o respawn loop quando o pgrep não detectava o processo recém-criado.
         """
         tray_cfg = self.config.get("tray", {})
         if not tray_cfg.get("auto_start", True):
@@ -142,63 +142,109 @@ class Daemon:
         try:
             import subprocess
             import sys
-
-            # Log do tray vai pra arquivo separado pra debug
             from pathlib import Path
 
             log_path = Path("/tmp/recordo.tray.log")
-            log_fd = open(log_path, "ab")
-            self._tray_proc = subprocess.Popen(
-                [sys.executable, "-m", "recordo", "--tray"],
-                stdout=log_fd,
-                stderr=log_fd,
-                stdin=subprocess.DEVNULL,
-                start_new_session=True,
-                close_fds=True,
-            )
+            with open(log_path, "ab") as log_fd:
+                self._tray_proc = subprocess.Popen(
+                    [sys.executable, "-m", "recordo", "--tray"],
+                    stdout=log_fd,
+                    stderr=log_fd,
+                    stdin=subprocess.DEVNULL,
+                    start_new_session=True,
+                    close_fds=True,
+                )
+
+            # Bug fix: registra PID file imediatamente
+            self._write_tray_pid_file(self._tray_proc.pid)
             log.info("tray spawned (pid=%d, log=%s)", self._tray_proc.pid, log_path)
         except Exception as e:
             log.exception("falha ao spawnar tray: %s", e)
             self._tray_proc = None
 
-    def _is_tray_running(self) -> bool:
-        """Verifica via pgrep se já existe outro 'recordo --tray' rodando."""
-        try:
-            import subprocess
+    @staticmethod
+    def _tray_pid_file_path() -> Path:
+        """Path do PID file no XDG_RUNTIME_DIR (limpa no logout/reboot)."""
+        from pathlib import Path
 
-            r = subprocess.run(
-                ["pgrep", "-f", "recordo.*--tray"],
-                capture_output=True,
-                text=True,
-                timeout=2,
-            )
-            # Filtrar nosso próprio PID (se já tem self._tray_proc)
-            running_pids = [int(p) for p in r.stdout.split() if p.isdigit()]
-            current_pid = os.getpid()
-            external = [p for p in running_pids if p != current_pid]
-            return len(external) > 0
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+        if runtime_dir:
+            return Path(runtime_dir) / "recordo-tray.pid"
+        return Path("/tmp/recordo-tray.pid")
+
+    def _write_tray_pid_file(self, pid: int) -> None:
+        try:
+            self._tray_pid_file_path().write_text(str(pid))
+        except OSError as e:
+            log.warning("falha escrever tray PID file: %s", e)
+
+    def _is_tray_running(self) -> bool:
+        """Bug fix v0.2.1: detection mais robusta via PID file + /proc check.
+
+        Antes: pgrep -f 'recordo.*--tray' pegava processos zumbi/transitórios
+        e não detectava o tray recém-spawned (race condition).
+        Agora: PID file + checa se PID está vivo + verifica cmdline.
+        """
+        pid_file = self._tray_pid_file_path()
+        if not pid_file.exists():
+            return False
+
+        try:
+            pid_str = pid_file.read_text().strip()
+            if not pid_str.isdigit():
+                pid_file.unlink(missing_ok=True)
+                return False
+            pid = int(pid_str)
+
+            # PID 1 ou meu próprio = stale
+            if pid <= 1 or pid == os.getpid():
+                pid_file.unlink(missing_ok=True)
+                return False
+
+            # /proc/<pid> existe?
+            from pathlib import Path
+
+            proc_dir = Path(f"/proc/{pid}")
+            if not proc_dir.exists():
+                pid_file.unlink(missing_ok=True)
+                return False
+
+            # cmdline contém 'recordo' e '--tray'?
+            try:
+                cmdline = (proc_dir / "cmdline").read_text().replace("\0", " ")
+                if "recordo" in cmdline and "--tray" in cmdline:
+                    return True
+                # PID reciclado para outro processo — limpar
+                pid_file.unlink(missing_ok=True)
+                return False
+            except OSError:
+                pid_file.unlink(missing_ok=True)
+                return False
+        except (OSError, ValueError) as e:
+            log.debug("read tray PID file falhou: %s", e)
             return False
 
     def _kill_tray(self) -> None:
         """Encerra subprocess do tray graciosamente (SIGTERM)."""
         proc = getattr(self, "_tray_proc", None)
-        if proc is None:
-            return
-        if proc.poll() is not None:
-            return  # já encerrou
-
-        try:
-            import signal as _signal
-
-            proc.send_signal(_signal.SIGTERM)
+        if proc is not None and proc.poll() is None:
             try:
-                proc.wait(timeout=3)
-            except Exception:
-                proc.kill()
-            log.info("tray encerrado")
-        except Exception as e:
-            log.warning("falha ao encerrar tray: %s", e)
+                import signal as _signal
+
+                proc.send_signal(_signal.SIGTERM)
+                try:
+                    proc.wait(timeout=3)
+                except Exception:
+                    proc.kill()
+                log.info("tray encerrado")
+            except Exception as e:
+                log.warning("falha ao encerrar tray: %s", e)
+
+        # Bug fix: limpa PID file mesmo se proc já morreu
+        try:
+            self._tray_pid_file_path().unlink(missing_ok=True)
+        except OSError:
+            pass
 
     # ── socket handler ─────────────────────────────────────────────────────
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:

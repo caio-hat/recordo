@@ -51,9 +51,13 @@ echo "  Prefix: $INSTALL_PREFIX"
 echo "════════════════════════════════════════════════"
 
 # ─── STEP 1: apt deps ───────────────────────────────────────────────────
+# Boas práticas open source: instalar TODAS as deps de uma vez.
+# Usuário não deve ter que descobrir pacotes faltando na execução.
 echo ""
 echo "[1/12] Verificando dependências do sistema..."
 NEED=()
+
+# CLI tools obrigatórias (gravação + transporte + utility)
 for pkg_bin in "ffmpeg:ffmpeg" "pactl:pulseaudio-utils" "notify-send:libnotify-bin" \
                 "xdotool:xdotool" "zenity:zenity" "dconf:dconf-cli" \
                 "wmctrl:wmctrl" "socat:socat" "jq:jq" "xdg-open:xdg-utils"; do
@@ -63,16 +67,51 @@ for pkg_bin in "ffmpeg:ffmpeg" "pactl:pulseaudio-utils" "notify-send:libnotify-b
         NEED+=("$pkg")
     fi
 done
+
 if ! python3 -c "import venv" 2>/dev/null; then
     NEED+=("python3-venv")
 fi
 
-# GTK4 + libadwaita pra GUI (opcional, mas default ligado)
+# GTK4 + libadwaita + media backend pra GUI (opcional via --no-gui)
 if [[ $NO_GUI -eq 0 ]]; then
+    # PyGObject + GTK4 + libadwaita
     if ! python3 -c "import gi; gi.require_version('Adw','1')" 2>/dev/null; then
         NEED+=("python3-gi" "gir1.2-gtk-4.0" "gir1.2-adw-1")
     fi
+
+    # CRÍTICO: GTK4 media backend (sem isso, Gtk.MediaFile retorna GtkNoMediaFile
+    # e o player de áudio do Recordo NÃO funciona — bug v0.2.0).
+    # libgtk-4-media-gstreamer plugs GStreamer no GTK4 para reproduzir opus/wav/mp3.
+    if ! dpkg -s libgtk-4-media-gstreamer >/dev/null 2>&1; then
+        NEED+=("libgtk-4-media-gstreamer")
+    fi
+
+    # GStreamer plugins para Opus/Vorbis/MP3 playback (Opus está em base, mas garantimos)
+    if ! dpkg -s gstreamer1.0-plugins-good >/dev/null 2>&1; then
+        NEED+=("gstreamer1.0-plugins-good")
+    fi
+    if ! dpkg -s gstreamer1.0-plugins-base >/dev/null 2>&1; then
+        NEED+=("gstreamer1.0-plugins-base")
+    fi
+
+    # Tray icon backends — XApp (preferido em Cinnamon/Mint/Xfce/MATE) ou Ayatana fallback
+    has_tray_backend=0
+    if python3 -c "import gi; gi.require_version('XApp','1.0'); from gi.repository import XApp" 2>/dev/null; then
+        has_tray_backend=1
+    elif python3 -c "import gi; gi.require_version('AyatanaAppIndicator3','0.1'); from gi.repository import AyatanaAppIndicator3" 2>/dev/null; then
+        has_tray_backend=1
+    fi
+    if [[ $has_tray_backend -eq 0 ]]; then
+        # Mint/Cinnamon: prefer XApp; outros DEs: Ayatana
+        DETECTED_DE="${XDG_CURRENT_DESKTOP:-unknown}"
+        if [[ "${DETECTED_DE,,}" =~ cinnamon|mate|xfce ]]; then
+            NEED+=("gir1.2-xapp-1.0")
+        else
+            NEED+=("gir1.2-ayatanaappindicator3-0.1")
+        fi
+    fi
 fi
+
 if [[ ${#NEED[@]} -gt 0 ]]; then
     echo "  → faltam: ${NEED[*]}"
     if command -v apt-get >/dev/null; then
@@ -81,6 +120,7 @@ if [[ ${#NEED[@]} -gt 0 ]]; then
         sudo apt-get install -y "${NEED[@]}"
     else
         echo "  ERRO: apt-get não disponível e dependências faltando: ${NEED[*]}" >&2
+        echo "       Instale manualmente equivalentes do seu gerenciador de pacotes." >&2
         exit 1
     fi
 else
@@ -268,15 +308,13 @@ else
         echo "  ℹ --with-tray-autostart: ignorado em v0.2 (tray agora é spawnado pelo daemon)"
         echo "    → ajuste config.tray.auto_start em ~/.config/recordo/config.toml se desejar"
     fi
-    # Garante que o backend de tray (XApp ou Ayatana) está disponível
-    if ! python3 -c "import gi; gi.require_version('XApp', '1.0'); from gi.repository import XApp" 2>/dev/null; then
-        if ! python3 -c "import gi; gi.require_version('AyatanaAppIndicator3', '0.1'); from gi.repository import AyatanaAppIndicator3" 2>/dev/null; then
-            echo "  ⚠ Nenhum backend de tray detectado — instalando gir1.2-xapp-1.0..."
-            sudo apt install -y gir1.2-xapp-1.0 || \
-                echo "    ✗ falhou. Tray pode não aparecer. Instale manual:"
-            echo "       sudo apt install gir1.2-xapp-1.0  # Cinnamon/Mint"
-            echo "       sudo apt install gir1.2-ayatanaappindicator3-0.1  # GNOME/Ubuntu"
-        fi
+    # Sanity check final: tray backend disponível? (já tratado no STEP 1)
+    if python3 -c "import gi; gi.require_version('XApp', '1.0'); from gi.repository import XApp" 2>/dev/null; then
+        echo "  ✓ tray backend: XApp 1.0"
+    elif python3 -c "import gi; gi.require_version('AyatanaAppIndicator3', '0.1'); from gi.repository import AyatanaAppIndicator3" 2>/dev/null; then
+        echo "  ✓ tray backend: AyatanaAppIndicator3"
+    else
+        echo "  ⚠ Nenhum backend de tray disponível (ícone não aparecerá)"
     fi
     if command -v update-desktop-database >/dev/null; then
         update-desktop-database -q "$APPS_DIR" || true

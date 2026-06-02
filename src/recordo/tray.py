@@ -28,6 +28,7 @@ Uso:
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -749,21 +750,48 @@ def run_tray() -> int:
         log.error("tray exit: backend indisponível")
         return 2  # exit 2 = backend indisponível (vs 1 generic)
 
+    # Bug fix v0.2.1: escreve PID file p/ daemon detection
+    _write_tray_pid_file()
+
     log.info("iniciando tray (backend=%s)", _BACKEND)
     try:
         RecordoTray()
     except Exception as e:
         log.exception("falha ao criar RecordoTray: %s", e)
         print(f"ERRO ao criar tray: {e}", file=sys.stderr)
+        _remove_tray_pid_file()
         return 3
 
     try:
         Gtk.main()
     except KeyboardInterrupt:
         log.info("tray: SIGINT recebido")
+        _remove_tray_pid_file()
         return 130
+    _remove_tray_pid_file()
     log.info("tray: Gtk.main() retornou normalmente")
     return 0
+
+
+def _tray_pid_file() -> Path:
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+    if runtime_dir:
+        return Path(runtime_dir) / "recordo-tray.pid"
+    return Path("/tmp/recordo-tray.pid")
+
+
+def _write_tray_pid_file() -> None:
+    try:
+        _tray_pid_file().write_text(str(os.getpid()))
+    except OSError:
+        pass
+
+
+def _remove_tray_pid_file() -> None:
+    try:
+        _tray_pid_file().unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 if __name__ == "__main__":

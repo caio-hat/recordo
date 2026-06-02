@@ -1247,7 +1247,25 @@ def _do_transcribe_step(
         return {"ok": False, "step": "transcribe", "error": "transcrição indisponível"}
 
     transcriber = get_transcriber(actual_backend, transcriber_cfg)
-    result = transcriber.transcribe(audio, language=language)
+
+    # Bug fix v0.2.1: capturar erro de "model.bin not found" e dar mensagem útil
+    try:
+        result = transcriber.transcribe(audio, language=language)
+    except RuntimeError as e:
+        msg = str(e)
+        if "Unable to open file 'model.bin'" in msg or "model.bin" in msg.lower():
+            # Modelo HF baixado parcial ou ID errado
+            return {
+                "ok": False,
+                "step": "transcribe",
+                "error": (
+                    "Modelo Whisper não encontrado em disco. "
+                    "Abra Modelos no menu lateral e baixe o modelo configurado, "
+                    "ou volte para Configurações e selecione um modelo já instalado "
+                    "(ex: large-v3-turbo)."
+                ),
+            }
+        raise
 
     # Resetar placeholder se já tinha transcrição
     nota = nota_md.read_text(encoding="utf-8")
