@@ -218,6 +218,14 @@ class TranscribePage(Gtk.Box):
             btn_x.set_tooltip_text("Re-extrair tarefas (já existe)")
         action_box.append(btn_x)
 
+        # Botão Player (C1+C2+C3+C4) — abre PlayerDialog modal
+        btn_p = Gtk.Button(
+            icon_name="media-playback-start-symbolic", tooltip_text="Reproduzir + editar transcrição"
+        )
+        btn_p.add_css_class("flat")
+        btn_p.connect("clicked", self._on_open_player, d)
+        action_box.append(btn_p)
+
         # Botão Abrir pasta
         btn_o = Gtk.Button(icon_name="folder-open-symbolic", tooltip_text="Abrir pasta")
         btn_o.add_css_class("flat")
@@ -226,6 +234,13 @@ class TranscribePage(Gtk.Box):
 
         row.add_suffix(action_box)
         self.listbox.append(row)
+
+    def _on_open_player(self, _btn, target_dir: Path) -> None:
+        """C1-C4: Abre PlayerDialog modal."""
+        from .widgets.player_dialog import PlayerDialog
+
+        dlg = PlayerDialog(self.window, target_dir)
+        dlg.present()
 
     def _on_run_step(self, btn: Gtk.Button, target_dir: Path, step: str) -> None:
         """A3: Aciona pipeline.run_step async + atualiza UI."""
