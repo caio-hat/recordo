@@ -262,14 +262,21 @@ else
     cp "$REPO_DIR/share/icons/hicolor/symbolic/apps/recordo-symbolic.svg" "$ICONS_DIR/symbolic/apps/recordo-symbolic.svg"
     cp "$REPO_DIR/share/icons/hicolor/32x32/apps/recordo.svg" "$ICONS_DIR/32x32/apps/recordo.svg"
 
-    # Autostart do tray icon (opt-in via --with-tray-autostart)
-    AUTOSTART_DIR="$HOME/.config/autostart"
+    # T0: Tray agora é gerenciado pelo daemon (config.tray.auto_start=true default).
+    # Flag legacy --with-tray-autostart ignorada — daemon spawna tray automaticamente.
     if [[ ${WITH_TRAY_AUTOSTART:-0} -eq 1 ]]; then
-        mkdir -p "$AUTOSTART_DIR"
-        cp "$REPO_DIR/share/autostart/recordo-tray.desktop" "$AUTOSTART_DIR/recordo-tray.desktop"
-        echo "  ✓ tray autostart instalado em $AUTOSTART_DIR"
-    else
-        echo "  ℹ tray autostart NÃO instalado (use --with-tray-autostart pra ativar)"
+        echo "  ℹ --with-tray-autostart: ignorado em v0.2 (tray agora é spawnado pelo daemon)"
+        echo "    → ajuste config.tray.auto_start em ~/.config/recordo/config.toml se desejar"
+    fi
+    # Garante que o backend de tray (XApp ou Ayatana) está disponível
+    if ! python3 -c "import gi; gi.require_version('XApp', '1.0'); from gi.repository import XApp" 2>/dev/null; then
+        if ! python3 -c "import gi; gi.require_version('AyatanaAppIndicator3', '0.1'); from gi.repository import AyatanaAppIndicator3" 2>/dev/null; then
+            echo "  ⚠ Nenhum backend de tray detectado — instalando gir1.2-xapp-1.0..."
+            sudo apt install -y gir1.2-xapp-1.0 || \
+                echo "    ✗ falhou. Tray pode não aparecer. Instale manual:"
+            echo "       sudo apt install gir1.2-xapp-1.0  # Cinnamon/Mint"
+            echo "       sudo apt install gir1.2-ayatanaappindicator3-0.1  # GNOME/Ubuntu"
+        fi
     fi
     if command -v update-desktop-database >/dev/null; then
         update-desktop-database -q "$APPS_DIR" || true

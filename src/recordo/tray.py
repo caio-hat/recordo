@@ -50,19 +50,33 @@ SYMBOLIC_ICON = "recordo-symbolic"  # icone instalado em hicolor/symbolic/apps/
 
 # ── Backend probe: XApp (preferido) ou Ayatana fallback ─────────────────────
 _BACKEND: str = "none"
+_BACKEND_ERROR: str = ""
 try:
     gi.require_version("XApp", "1.0")
     from gi.repository import XApp  # type: ignore[import-not-found]
 
     _BACKEND = "xapp"
-except (ValueError, ImportError):
+    log.info("tray backend: XApp 1.0 (preferido em Cinnamon/Mint/Xfce/MATE)")
+except (ValueError, ImportError) as _e_xapp:
     try:
         gi.require_version("AyatanaAppIndicator3", "0.1")
         from gi.repository import AyatanaAppIndicator3 as AppIndicator  # type: ignore[import-not-found]
 
         _BACKEND = "ayatana"
-    except (ValueError, ImportError):
-        log.warning("nem XApp nem AyatanaAppIndicator3 disponíveis — tray indisponível")
+        log.info("tray backend: AyatanaAppIndicator3 (fallback - GNOME/Ubuntu)")
+    except (ValueError, ImportError) as _e_aya:
+        _BACKEND_ERROR = (
+            f"Nenhum backend de tray disponível.\n"
+            f"  XApp: {_e_xapp}\n"
+            f"  Ayatana: {_e_aya}\n"
+            f"\n"
+            f"Para instalar (Linux Mint/Cinnamon recomendado):\n"
+            f"  sudo apt install gir1.2-xapp-1.0\n"
+            f"\n"
+            f"Para outros DEs:\n"
+            f"  sudo apt install gir1.2-ayatanaappindicator3-0.1"
+        )
+        log.error("tray indisponível:\n%s", _BACKEND_ERROR)
 
 
 class RecordoTray:
@@ -108,7 +122,7 @@ class RecordoTray:
     def _build_menu(self) -> None:
         self.menu = Gtk.Menu()
 
-        # Status label (não-clicável)
+        # ── Status (não-clicável) ──────────────────────────────────────────
         status_item = Gtk.MenuItem(label="⚫ Daemon offline")
         status_item.set_sensitive(False)
         self.menu.append(status_item)
@@ -116,7 +130,7 @@ class RecordoTray:
 
         self.menu.append(Gtk.SeparatorMenuItem())
 
-        # Toggle gravação
+        # ── Toggle gravação (estado-aware) ─────────────────────────────────
         toggle_item = Gtk.MenuItem(label="▶  Iniciar gravação")
         toggle_item.connect("activate", self._on_toggle)
         self.menu.append(toggle_item)
@@ -130,35 +144,155 @@ class RecordoTray:
 
         self.menu.append(Gtk.SeparatorMenuItem())
 
-        # Abrir GUI
+        # ── T1: Submenu Gravações Recentes ─────────────────────────────────
+        recent_item = Gtk.MenuItem(label="📂  Gravações recentes")
+        recent_submenu = Gtk.Menu()
+        recent_item.set_submenu(recent_submenu)
+        self.menu.append(recent_item)
+        self.menu_items["recent"] = recent_item
+        self.menu_items["recent_submenu"] = recent_submenu  # type: ignore[assignment]
+
+        # ── T1: Submenu Pipeline ───────────────────────────────────────────
+        pipeline_item = Gtk.MenuItem(label="⚙  Pipeline")
+        pipeline_submenu = Gtk.Menu()
+
+        # Toggle auto-pipeline (CheckMenuItem)
+        from .config import load_config
+
+        cfg = load_config()
+        auto_run = cfg.get("pipeline", {}).get("auto_run", False)
+        auto_pipe_item = Gtk.CheckMenuItem(label="Auto-pipeline (transcreve ao parar)")
+        auto_pipe_item.set_active(auto_run)
+        auto_pipe_item.connect("toggled", self._on_toggle_auto_pipeline)
+        pipeline_submenu.append(auto_pipe_item)
+        self.menu_items["auto_pipeline_check"] = auto_pipe_item  # type: ignore[assignment]
+
+        pipeline_submenu.append(Gtk.SeparatorMenuItem())
+
+        last_transcribe_item = Gtk.MenuItem(label="✎  Transcrever última gravação")
+        last_transcribe_item.connect("activate", self._on_run_last_step, "transcribe")
+        pipeline_submenu.append(last_transcribe_item)
+
+        last_summary_item = Gtk.MenuItem(label="📝  Resumir última gravação")
+        last_summary_item.connect("activate", self._on_run_last_step, "summarize")
+        pipeline_submenu.append(last_summary_item)
+
+        last_tasks_item = Gtk.MenuItem(label="✅  Extrair tarefas da última")
+        last_tasks_item.connect("activate", self._on_run_last_step, "tasks")
+        pipeline_submenu.append(last_tasks_item)
+
+        pipeline_submenu.append(Gtk.SeparatorMenuItem())
+
+        unload_ollama_item = Gtk.MenuItem(label="🧹  Encerrar Ollama agora")
+        unload_ollama_item.connect("activate", self._on_unload_ollama)
+        pipeline_submenu.append(unload_ollama_item)
+
+        pipeline_item.set_submenu(pipeline_submenu)
+        self.menu.append(pipeline_item)
+
+        # ── T1: Submenu Próxima gravação ───────────────────────────────────
+        next_item = Gtk.MenuItem(label="🎧  Próxima gravação")
+        next_submenu = Gtk.Menu()
+
+        # Backend (radio)
+        backend_item = Gtk.MenuItem(label="Backend transcrição")
+        backend_submenu = Gtk.Menu()
+        backend_group: list[Gtk.RadioMenuItem] = []
+        current_backend = cfg.get("transcriber", {}).get("backend", "whisper")
+        for bk in ["whisper", "parakeet", "cohere"]:
+            item = Gtk.RadioMenuItem(label=bk.capitalize(), group=backend_group[0] if backend_group else None)
+            backend_group.append(item)
+            item.set_active(bk == current_backend)
+            item.connect("toggled", self._on_select_backend, bk)
+            backend_submenu.append(item)
+        backend_item.set_submenu(backend_submenu)
+        next_submenu.append(backend_item)
+
+        # Layout (radio)
+        layout_item = Gtk.MenuItem(label="Layout áudio")
+        layout_submenu = Gtk.Menu()
+        layout_group: list[Gtk.RadioMenuItem] = []
+        current_layout = cfg.get("recording", {}).get("layout", "merge")
+        for lay in ["merge", "split"]:
+            label = "Estéreo (merge)" if lay == "merge" else "Mono separado (split)"
+            item = Gtk.RadioMenuItem(label=label, group=layout_group[0] if layout_group else None)
+            layout_group.append(item)
+            item.set_active(lay == current_layout)
+            item.connect("toggled", self._on_select_layout, lay)
+            layout_submenu.append(item)
+        layout_item.set_submenu(layout_submenu)
+        next_submenu.append(layout_item)
+
+        # Bitrate (radio)
+        bitrate_item = Gtk.MenuItem(label="Bitrate Opus")
+        bitrate_submenu = Gtk.Menu()
+        bitrate_group: list[Gtk.RadioMenuItem] = []
+        current_bitrate = cfg.get("recording", {}).get("bitrate", "32k")
+        for br in ["24k", "32k", "48k", "64k", "96k", "128k"]:
+            item = Gtk.RadioMenuItem(label=br, group=bitrate_group[0] if bitrate_group else None)
+            bitrate_group.append(item)
+            item.set_active(br == current_bitrate)
+            item.connect("toggled", self._on_select_bitrate, br)
+            bitrate_submenu.append(item)
+        bitrate_item.set_submenu(bitrate_submenu)
+        next_submenu.append(bitrate_item)
+
+        next_item.set_submenu(next_submenu)
+        self.menu.append(next_item)
+
+        self.menu.append(Gtk.SeparatorMenuItem())
+
+        # ── Atalhos rápidos ────────────────────────────────────────────────
         gui_item = Gtk.MenuItem(label="🪟  Abrir GUI desktop")
         gui_item.connect("activate", self._on_open_gui)
         self.menu.append(gui_item)
         self.menu_items["gui"] = gui_item
 
-        # Abrir Notas
         notas_item = Gtk.MenuItem(label="📂  Abrir ~/Notas")
         notas_item.connect("activate", self._on_open_notas)
         self.menu.append(notas_item)
 
-        # Reload config
+        settings_item = Gtk.MenuItem(label="⚙  Configurações")
+        settings_item.connect("activate", self._on_open_settings)
+        self.menu.append(settings_item)
+
         reload_item = Gtk.MenuItem(label="↻  Recarregar config")
         reload_item.connect("activate", self._on_reload_config)
         self.menu.append(reload_item)
 
         self.menu.append(Gtk.SeparatorMenuItem())
 
-        # Encerrar daemon
+        # ── T2: Submenu Daemon (state-aware) ───────────────────────────────
+        daemon_menu_item = Gtk.MenuItem(label="🔌  Daemon")
+        daemon_submenu = Gtk.Menu()
+
+        start_daemon_item = Gtk.MenuItem(label="▶  Iniciar daemon")
+        start_daemon_item.connect("activate", self._on_start_daemon)
+        daemon_submenu.append(start_daemon_item)
+        self.menu_items["daemon_start"] = start_daemon_item
+
+        restart_daemon_item = Gtk.MenuItem(label="↻  Reiniciar daemon")
+        restart_daemon_item.connect("activate", self._on_restart_daemon)
+        daemon_submenu.append(restart_daemon_item)
+        self.menu_items["daemon_restart"] = restart_daemon_item
+
         quit_daemon_item = Gtk.MenuItem(label="⏻  Encerrar daemon")
         quit_daemon_item.connect("activate", self._on_quit_daemon)
-        self.menu.append(quit_daemon_item)
+        daemon_submenu.append(quit_daemon_item)
+        self.menu_items["daemon_quit"] = quit_daemon_item
 
-        # Sair tray
+        daemon_menu_item.set_submenu(daemon_submenu)
+        self.menu.append(daemon_menu_item)
+
+        # ── Sair tray ─────────────────────────────────────────────────────
         quit_item = Gtk.MenuItem(label="✕  Sair (daemon continua)")
         quit_item.connect("activate", self._on_quit_tray)
         self.menu.append(quit_item)
 
         self.menu.show_all()
+
+        # Popula recentes (async-ish — uma vez ao montar, depois refresh em poll)
+        self._populate_recent()
 
         # Conecta menu ao indicator (Ayatana)
         if _BACKEND == "ayatana" and self.icon:
@@ -248,6 +382,277 @@ class RecordoTray:
     def _on_quit_tray(_item: Gtk.MenuItem) -> None:
         Gtk.main_quit()
 
+    # ── T1: Recent recordings ─────────────────────────────────────────────
+    def _populate_recent(self) -> None:
+        """Lista 5 últimas gravações no submenu Gravações Recentes."""
+        from .config import NOTAS_DIR
+        from .pipeline import get_recording_status
+
+        submenu = self.menu_items.get("recent_submenu")
+        if submenu is None:
+            return
+
+        # Limpar items antigos
+        for child in submenu.get_children():
+            submenu.remove(child)
+
+        if not NOTAS_DIR.exists():
+            empty = Gtk.MenuItem(label="(nenhuma gravação)")
+            empty.set_sensitive(False)
+            submenu.append(empty)
+            submenu.show_all()
+            return
+
+        try:
+            dirs = sorted(
+                (d for d in NOTAS_DIR.iterdir() if d.is_dir() and (d / "audio.opus").exists()),
+                key=lambda d: d.stat().st_mtime,
+                reverse=True,
+            )[:5]
+        except OSError:
+            dirs = []
+
+        if not dirs:
+            empty = Gtk.MenuItem(label="(nenhuma gravação)")
+            empty.set_sensitive(False)
+            submenu.append(empty)
+        else:
+            for d in dirs:
+                status = get_recording_status(d)
+                # Status icons: ✓ ou ✗
+                badges = []
+                if status["has_transcript"]:
+                    badges.append("📝")
+                if status["has_summary"]:
+                    badges.append("📋")
+                if status["has_tasks"]:
+                    badges.append("✅")
+                badge_str = " ".join(badges) if badges else "🎙"
+
+                # Truncar nome longo
+                name = d.name.replace("_", " ")
+                if len(name) > 38:
+                    name = name[:35] + "..."
+
+                label = f"{badge_str}  {name}"
+                item = Gtk.MenuItem(label=label)
+                item.connect("activate", self._on_open_recording, d)
+                submenu.append(item)
+
+        submenu.show_all()
+
+    @staticmethod
+    def _on_open_recording(_item: Gtk.MenuItem, target_dir) -> None:
+        try:
+            subprocess.Popen(
+                ["xdg-open", str(target_dir)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            log.warning("xdg-open não disponível")
+
+    # ── T1: Pipeline submenu actions ───────────────────────────────────────
+    def _on_toggle_auto_pipeline(self, item: Gtk.CheckMenuItem) -> None:
+        """Toggle pipeline.auto_run em config + reload daemon."""
+        from .config import load_config, save_config
+
+        new_value = item.get_active()
+        cfg = load_config()
+        cfg.setdefault("pipeline", {})["auto_run"] = new_value
+        save_config(cfg)
+        send_to_daemon("reload_config")
+        log.info("auto-pipeline: %s", "ON" if new_value else "OFF")
+
+    def _on_run_last_step(self, _item: Gtk.MenuItem, step: str) -> None:
+        """Aciona run_step na última gravação (background thread)."""
+        import threading
+
+        from .config import NOTAS_DIR
+        from .pipeline import run_step
+
+        if not NOTAS_DIR.exists():
+            self._notify_error("Pipeline", "~/Notas não existe")
+            return
+
+        try:
+            dirs = sorted(
+                (d for d in NOTAS_DIR.iterdir() if d.is_dir() and (d / "audio.opus").exists()),
+                key=lambda d: d.stat().st_mtime,
+                reverse=True,
+            )
+        except OSError:
+            dirs = []
+
+        if not dirs:
+            self._notify_error("Pipeline", "nenhuma gravação encontrada")
+            return
+
+        last = dirs[0]
+        step_label = {"transcribe": "Transcrição", "summarize": "Resumo", "tasks": "Tarefas"}[step]
+
+        try:
+            subprocess.run(
+                ["notify-send", "-a", "Recordo", f"⏳ {step_label}", last.name],
+                timeout=2,
+                check=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+        def worker():
+            try:
+                result = run_step(last, step)
+                msg = (
+                    f"✓ {step_label}: {result.get('backend', 'OK')}"
+                    if result.get("ok")
+                    else f"⚠ {result.get('error', '?')}"
+                )
+            except Exception as e:
+                msg = f"⚠ {e}"
+            try:
+                subprocess.run(
+                    ["notify-send", "-a", "Recordo", f"Pipeline: {last.name}", msg],
+                    timeout=2,
+                    check=False,
+                )
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+            # Re-popula menu de recentes (badges atualizadas)
+            GLib.idle_add(self._populate_recent)
+
+        threading.Thread(target=worker, daemon=True, name=f"tray-{step}").start()
+
+    @staticmethod
+    def _on_unload_ollama(_item: Gtk.MenuItem) -> None:
+        """Descarrega Ollama models imediatamente."""
+        from .config import load_config
+        from .summarizer.ollama import unload_ollama_model
+
+        cfg = load_config()
+        ollama_cfg = cfg.get("summarizer", {}).get("ollama", {})
+        model = ollama_cfg.get("model", "gemma2:2b")
+        host = ollama_cfg.get("host", "http://localhost:11434")
+        ok = unload_ollama_model(model, host=host)
+        try:
+            subprocess.run(
+                [
+                    "notify-send",
+                    "-a",
+                    "Recordo",
+                    "🧹 Ollama" if ok else "⚠ Ollama",
+                    f"Modelo {model} descarregado" if ok else "Falha ao descarregar",
+                ],
+                timeout=2,
+                check=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+    # ── T1: Próxima gravação (config edits) ────────────────────────────────
+    def _on_select_backend(self, item: Gtk.RadioMenuItem, backend: str) -> None:
+        if not item.get_active():
+            return
+        from .config import load_config, save_config
+
+        cfg = load_config()
+        cfg.setdefault("transcriber", {})["backend"] = backend
+        save_config(cfg)
+        send_to_daemon("reload_config")
+        log.info("backend → %s", backend)
+
+    def _on_select_layout(self, item: Gtk.RadioMenuItem, layout: str) -> None:
+        if not item.get_active():
+            return
+        from .config import load_config, save_config
+
+        cfg = load_config()
+        cfg.setdefault("recording", {})["layout"] = layout
+        save_config(cfg)
+        send_to_daemon("reload_config")
+
+    def _on_select_bitrate(self, item: Gtk.RadioMenuItem, bitrate: str) -> None:
+        if not item.get_active():
+            return
+        from .config import load_config, save_config
+
+        cfg = load_config()
+        cfg.setdefault("recording", {})["bitrate"] = bitrate
+        save_config(cfg)
+        send_to_daemon("reload_config")
+
+    # ── Configurações + GUI shortcuts ─────────────────────────────────────
+    @staticmethod
+    def _on_open_settings(_item: Gtk.MenuItem) -> None:
+        """Abre GUI direto na aba Configurações via flag --gui-page."""
+        try:
+            subprocess.Popen(
+                ["recordo-gui"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except FileNotFoundError:
+            try:
+                subprocess.Popen(
+                    [sys.executable, "-m", "recordo.gui"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            except OSError as e:
+                log.warning("falha abrir GUI: %s", e)
+
+    # ── T2: Daemon control ─────────────────────────────────────────────────
+    def _on_start_daemon(self, _item: Gtk.MenuItem) -> None:
+        """Inicia daemon via client.ensure_daemon (background)."""
+        import threading
+
+        from . import client as client_mod
+
+        def worker():
+            ok = client_mod.ensure_daemon()
+            msg = "✓ Daemon iniciado" if ok else "⚠ Falha ao iniciar daemon"
+            try:
+                subprocess.run(
+                    ["notify-send", "-a", "Recordo", "Daemon", msg],
+                    timeout=2,
+                    check=False,
+                )
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+            GLib.idle_add(self._refresh_status)
+
+        threading.Thread(target=worker, daemon=True, name="tray-start-daemon").start()
+
+    def _on_restart_daemon(self, _item: Gtk.MenuItem) -> None:
+        """Encerra + reinicia daemon."""
+        import threading
+        import time as _time
+
+        from . import client as client_mod
+
+        def worker():
+            send_to_daemon("quit")
+            # Espera até 5s pro socket sumir
+            for _ in range(20):
+                if not client_mod.is_daemon_alive():
+                    break
+                _time.sleep(0.25)
+            ok = client_mod.ensure_daemon()
+            msg = "✓ Daemon reiniciado" if ok else "⚠ Restart falhou"
+            try:
+                subprocess.run(
+                    ["notify-send", "-a", "Recordo", "Daemon", msg],
+                    timeout=2,
+                    check=False,
+                )
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+            GLib.idle_add(self._refresh_status)
+
+        threading.Thread(target=worker, daemon=True, name="tray-restart-daemon").start()
+
     @staticmethod
     def _notify_error(action: str, msg: str) -> None:
         try:
@@ -305,8 +710,21 @@ class RecordoTray:
             self.menu_items["status"].set_label(status_label)
         if "toggle" in self.menu_items:
             self.menu_items["toggle"].set_label(toggle_label)
+            # Toggle só ativa quando daemon up
+            self.menu_items["toggle"].set_sensitive(self.daemon_alive)
         if "mark" in self.menu_items:
             self.menu_items["mark"].set_sensitive(self.recording)
+
+        # T2: Daemon submenu state-aware
+        if "daemon_start" in self.menu_items:
+            # Iniciar disponível só quando daemon offline
+            self.menu_items["daemon_start"].set_sensitive(not self.daemon_alive)
+        if "daemon_restart" in self.menu_items:
+            # Reiniciar disponível só quando daemon online
+            self.menu_items["daemon_restart"].set_sensitive(self.daemon_alive)
+        if "daemon_quit" in self.menu_items:
+            # Encerrar disponível só quando daemon online
+            self.menu_items["daemon_quit"].set_sensitive(self.daemon_alive)
 
 
 def _fmt_elapsed(seconds: int) -> str:
@@ -319,21 +737,32 @@ def _fmt_elapsed(seconds: int) -> str:
 
 def run_tray() -> int:
     """Entrypoint: cria tray + roda Gtk.main(). Bloqueia até Sair."""
+    # Logging primeiro para que erros do backend probe apareçam
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+
     if _BACKEND == "none":
-        print(
-            "ERRO: Tray indisponível. Instale:\n"
-            "  sudo apt install gir1.2-xapp-1.0  # Cinnamon/Mint (preferido)\n"
-            "  sudo apt install gir1.2-ayatanaappindicator3-0.1  # Ubuntu/GNOME",
-            file=sys.stderr,
-        )
-        return 1
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+        # Mensagem detalhada com os erros específicos
+        print(_BACKEND_ERROR, file=sys.stderr)
+        log.error("tray exit: backend indisponível")
+        return 2  # exit 2 = backend indisponível (vs 1 generic)
+
     log.info("iniciando tray (backend=%s)", _BACKEND)
-    RecordoTray()
+    try:
+        RecordoTray()
+    except Exception as e:
+        log.exception("falha ao criar RecordoTray: %s", e)
+        print(f"ERRO ao criar tray: {e}", file=sys.stderr)
+        return 3
+
     try:
         Gtk.main()
     except KeyboardInterrupt:
+        log.info("tray: SIGINT recebido")
         return 130
+    log.info("tray: Gtk.main() retornou normalmente")
     return 0
 
 

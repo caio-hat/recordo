@@ -228,6 +228,12 @@ DEFAULTS: dict[str, Any] = {
         "window_remember": True,
         "last_window_geometry": "",
     },
+    # T0: Tray icon
+    "tray": {
+        # Auto-start: daemon spawna 'recordo --tray' como subprocess no boot.
+        # Set False se você quer rodar tray manualmente ou desabilitar.
+        "auto_start": True,
+    },
 }
 
 

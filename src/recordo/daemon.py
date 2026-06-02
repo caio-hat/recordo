@@ -65,6 +65,8 @@ class Daemon:
         self._tasks: list[asyncio.Task] = []
         self._reminder_last_mono: float = 0.0
         self._auto_detect_first_seen: dict[str, float] = {}
+        # T0: tray subprocess (spawn em _maybe_spawn_tray, kill em _shutdown)
+        self._tray_proc = None  # type: ignore[assignment]
 
         # Executor dedicado pra trabalho pesado (post_pipeline, measure_mic_db).
         # 2 workers: 1 pode estar rodando finalize+concat enquanto o próximo
@@ -89,6 +91,9 @@ class Daemon:
         self._tasks.append(asyncio.create_task(self._auto_detect_loop(), name="auto-detect"))
         self._tasks.append(asyncio.create_task(self._ollama_idle_loop(), name="ollama-idle"))
 
+        # T0: spawn tray automático se config.tray.auto_start (default True)
+        self._maybe_spawn_tray()
+
         loop = asyncio.get_event_loop()
         stop_event = asyncio.Event()
         for sig in (signal.SIGINT, signal.SIGTERM):
@@ -106,6 +111,8 @@ class Daemon:
             t.cancel()
         if self.recorder and self.recorder.recording:
             await self._cmd_stop({})
+        # T0: encerra tray graciosamente
+        self._kill_tray()
         try:
             SOCKET_PATH.unlink()
         except FileNotFoundError:
@@ -114,6 +121,84 @@ class Daemon:
         # daemon faz shutdown gracioso; jobs >timeout serão cancelados.
         self._pipeline_executor.shutdown(wait=False, cancel_futures=False)
         notify("Recordo encerrado", "Daemon parado.", icon="media-playback-stop", transient=True)
+
+    # ── T0: Tray subprocess management ─────────────────────────────────────
+    def _maybe_spawn_tray(self) -> None:
+        """Spawna 'recordo --tray' como subprocess detached se config permitir.
+
+        Não bloqueia: tray roda independente. Daemon mantém PID em
+        self._tray_proc para cleanup no shutdown.
+        """
+        tray_cfg = self.config.get("tray", {})
+        if not tray_cfg.get("auto_start", True):
+            log.info("tray auto_start=false — pulando spawn")
+            return
+
+        # Evita duplo spawn se já existe processo recordo --tray rodando
+        if self._is_tray_running():
+            log.info("tray já está rodando (outro processo) — não spawna")
+            return
+
+        try:
+            import subprocess
+            import sys
+
+            # Log do tray vai pra arquivo separado pra debug
+            from pathlib import Path
+
+            log_path = Path("/tmp/recordo.tray.log")
+            log_fd = open(log_path, "ab")
+            self._tray_proc = subprocess.Popen(
+                [sys.executable, "-m", "recordo", "--tray"],
+                stdout=log_fd,
+                stderr=log_fd,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+                close_fds=True,
+            )
+            log.info("tray spawned (pid=%d, log=%s)", self._tray_proc.pid, log_path)
+        except Exception as e:
+            log.exception("falha ao spawnar tray: %s", e)
+            self._tray_proc = None
+
+    def _is_tray_running(self) -> bool:
+        """Verifica via pgrep se já existe outro 'recordo --tray' rodando."""
+        try:
+            import subprocess
+
+            r = subprocess.run(
+                ["pgrep", "-f", "recordo.*--tray"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            # Filtrar nosso próprio PID (se já tem self._tray_proc)
+            running_pids = [int(p) for p in r.stdout.split() if p.isdigit()]
+            current_pid = os.getpid()
+            external = [p for p in running_pids if p != current_pid]
+            return len(external) > 0
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+
+    def _kill_tray(self) -> None:
+        """Encerra subprocess do tray graciosamente (SIGTERM)."""
+        proc = getattr(self, "_tray_proc", None)
+        if proc is None:
+            return
+        if proc.poll() is not None:
+            return  # já encerrou
+
+        try:
+            import signal as _signal
+
+            proc.send_signal(_signal.SIGTERM)
+            try:
+                proc.wait(timeout=3)
+            except Exception:
+                proc.kill()
+            log.info("tray encerrado")
+        except Exception as e:
+            log.warning("falha ao encerrar tray: %s", e)
 
     # ── socket handler ─────────────────────────────────────────────────────
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
