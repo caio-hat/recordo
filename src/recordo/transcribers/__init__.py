@@ -9,6 +9,8 @@ Comparação rápida (Open ASR Leaderboard 2026):
 
 from __future__ import annotations
 
+import threading as _threading
+import time as _time
 from typing import Any
 
 from .base import Transcriber, TranscriptionResult, TranscriptionSegment
@@ -48,13 +50,42 @@ def get_transcriber(backend: str, config: dict[str, Any]) -> Transcriber:
     )
 
 
+def _cached_for(seconds: float):
+    """B9: TTL cache decorator (same as summarizer/__init__.py)."""
+
+    def decorator(fn):
+        lock = _threading.Lock()
+        state: dict = {"value": None, "expires_at": 0.0}
+
+        def wrapper(*args, **kwargs):
+            now = _time.monotonic()
+            with lock:
+                if state["value"] is not None and now < state["expires_at"]:
+                    return state["value"]
+            value = fn(*args, **kwargs)
+            with lock:
+                state["value"] = value
+                state["expires_at"] = now + seconds
+            return value
+
+        wrapper._cache_state = state  # type: ignore[attr-defined]
+        wrapper._cache_clear = lambda: state.update(value=None, expires_at=0.0)  # type: ignore[attr-defined]
+        return wrapper
+
+    return decorator
+
+
+@_cached_for(seconds=30.0)
 def available_backends() -> list[str]:
-    """Lista backends técnicamente disponíveis no ambiente."""
-    out = ["cohere"]  # cohere é HTTP-only, sempre técnicamente disponível
+    """Lista backends técnicamente disponíveis no ambiente. Cache TTL 30s (B9).
+
+    Ordering (B11): whisper → parakeet → cohere (preferência local-first).
+    """
+    out: list[str] = []
     try:
         import faster_whisper  # noqa: F401
 
-        out.insert(0, "whisper")
+        out.append("whisper")
     except ImportError:
         pass
     try:
@@ -63,4 +94,5 @@ def available_backends() -> list[str]:
         out.append("parakeet")
     except ImportError:
         pass
+    out.append("cohere")  # HTTP-only, sempre tecnicamente disponível
     return out

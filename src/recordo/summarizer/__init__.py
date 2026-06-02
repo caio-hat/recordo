@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading as _threading
+import time as _time
 from typing import Any
 
 from .base import Summarizer, SummaryResult
@@ -78,22 +80,61 @@ def get_summarizer(backend: str, config: dict[str, Any] | None = None) -> Summar
     raise ValueError(f"backend de summarizer desconhecido: {backend!r}. Opções: {', '.join(_KNOWN_BACKENDS)}")
 
 
+def _cached_for(seconds: float):
+    """B9: TTL cache decorator. Avoids repeated HTTP probes on every call.
+
+    Cache invalidates after `seconds`. Thread-safe. Single-tenant — assumes
+    the cached function takes no args (or args are stable per-process).
+    """
+
+    def decorator(fn):
+        lock = _threading.Lock()
+        state: dict = {"value": None, "expires_at": 0.0}
+
+        def wrapper(*args, **kwargs):
+            now = _time.monotonic()
+            with lock:
+                if state["value"] is not None and now < state["expires_at"]:
+                    return state["value"]
+            # Compute outside lock to avoid blocking other callers
+            value = fn(*args, **kwargs)
+            with lock:
+                state["value"] = value
+                state["expires_at"] = now + seconds
+            return value
+
+        # Expose internal state for tests / explicit invalidation
+        wrapper._cache_state = state  # type: ignore[attr-defined]
+        wrapper._cache_clear = lambda: state.update(value=None, expires_at=0.0)  # type: ignore[attr-defined]
+        return wrapper
+
+    return decorator
+
+
+@_cached_for(seconds=30.0)
 def available_backends() -> list[str]:
     """Lista backends técnicamente disponíveis no ambiente.
 
+    Cache: 30s TTL (B9). Probe HTTP ao Ollama é ~1s no pior caso, então
+    fazemos no máximo 1 vez por meio minuto em vez de a cada chamada.
+
     Heurístico e none sempre estão. Ollama: probe HTTP best-effort.
-    Cloud providers: existem se o módulo carrega (no caso, sempre — usam urllib).
+    Cloud providers sempre disponíveis (urllib stdlib).
+
+    Ordering (B11): ollama (se up) → cloud → fallback (heuristic, none).
     """
-    out = ["heuristic", "none"]
-    # Cloud sempre disponíveis (urllib stdlib)
-    out.extend(["gemini", "openai", "openai_compat", "anthropic", "azure_openai"])
-    # Ollama: probe rápido pra detectar se está rodando
+    out: list[str] = []
+    # Ollama primeiro se disponível (preferência local-first)
     try:
         from urllib.request import Request, urlopen
 
         req = Request("http://localhost:11434/api/tags")
         with urlopen(req, timeout=1):
-            out.insert(0, "ollama")
+            out.append("ollama")
     except Exception:
         pass
+    # Cloud providers (sempre disponíveis tecnicamente — falha só com API key)
+    out.extend(["gemini", "openai", "openai_compat", "anthropic", "azure_openai"])
+    # Fallbacks
+    out.extend(["heuristic", "none"])
     return out
