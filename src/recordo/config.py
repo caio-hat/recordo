@@ -114,6 +114,9 @@ DEFAULTS: dict[str, Any] = {
             # v3 é multilingual (25 idiomas EU incluindo PT) com WER 6.34%
             "model": "nvidia/parakeet-tdt-0.6b-v3",
             "use_onnx": False,
+            # v0.2.3: chunking p/ áudio longo (evita OOM)
+            "chunk_seconds": 600,  # 10min por chunk
+            "chunk_overlap_seconds": 2.0,  # overlap entre chunks
         },
         "cohere": {
             # Cohere Transcribe (lançado 26/mar/2026) — SOTA Open ASR Leaderboard

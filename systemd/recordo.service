@@ -12,6 +12,12 @@ Restart=on-failure
 RestartSec=3
 TimeoutStopSec=15
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:%h/.local/bin:/home/linuxbrew/.linuxbrew/bin
+# v0.2.3: forçar locale UTF-8 (systemd user units herdam locale C/POSIX por
+# default, causando UnicodeDecodeError em subprocess.run(text=True) quando
+# stdout/stderr tem chars multibyte)
+Environment=LC_ALL=C.UTF-8
+Environment=LANG=C.UTF-8
+Environment=PYTHONIOENCODING=utf-8
 StandardInput=null
 StandardOutput=append:%t/recordo.daemon.log
 StandardError=append:%t/recordo.daemon.log

@@ -414,6 +414,18 @@ class RecordoWindow(Adw.ApplicationWindow):
         t.set_timeout(timeout)
         self.toast_overlay.add_toast(t)
 
+    def refresh_after_reload(self) -> None:
+        """v0.2.3: chamado após reload_config — atualiza páginas que cacheam config.
+
+        Antes: TranscribePage backend card ficava stale (mostrando parakeet
+        após user mudar para whisper).
+        """
+        if hasattr(self, "transcribe_page") and hasattr(self.transcribe_page, "refresh_backend_card"):
+            try:
+                self.transcribe_page.refresh_backend_card()
+            except Exception:
+                log.exception("refresh_backend_card falhou")
+
 
 class RecordoApp(Adw.Application):
     def __init__(self):
@@ -619,8 +631,14 @@ class RecordoApp(Adw.Application):
             if not self.window:
                 return
             if resp.get("ok"):
-                changes = resp.get("changes") or ["sem mudanças"]
-                self.window.toast(f"✓ Config recarregada · {len(changes)} mudança(s)")
+                changes = resp.get("changes") or []
+                if changes:
+                    self.window.toast(f"✓ Config recarregada · {len(changes)} mudança(s)")
+                else:
+                    self.window.toast("✓ Config recarregada (sem mudanças)")
+                # Bug fix v0.2.3: refresh do backend card no TranscribePage
+                # após reload (antes ficava stale com backend antigo)
+                self.window.refresh_after_reload()
             else:
                 self.window.toast(f"⚠ {resp.get('error', '?')}")
 

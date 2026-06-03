@@ -79,20 +79,6 @@ class TranscribePage(Gtk.Box):
 
     def _build_header(self) -> None:
         """Header com backend/modelo atuais + atalho pra Settings."""
-        cfg = load_config()
-        backend = cfg["transcriber"].get("backend", "whisper")
-        backend_label = backend.upper()
-
-        # Modelo específico do backend ativo
-        if backend == "whisper":
-            model = cfg["transcriber"]["whisper"].get("model", "?")
-        elif backend == "parakeet":
-            model = cfg["transcriber"]["parakeet"].get("model", "?")
-        elif backend == "cohere":
-            model = cfg["transcriber"]["cohere"].get("model", "?")
-        else:
-            model = "?"
-
         info_card = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL,
             spacing=12,
@@ -105,17 +91,16 @@ class TranscribePage(Gtk.Box):
 
         backend_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         backend_box.append(Gtk.Image.new_from_icon_name("system-run-symbolic"))
-        bk_label = Gtk.Label(xalign=0)
-        bk_label.set_markup(f"<b>Backend:</b> {backend_label}")
-        backend_box.append(bk_label)
+        # v0.2.3: guardar refs aos labels para refresh_backend_card()
+        self._hdr_bk_label = Gtk.Label(xalign=0)
+        backend_box.append(self._hdr_bk_label)
         text_col.append(backend_box)
 
         model_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         model_box.append(Gtk.Image.new_from_icon_name("emblem-package-symbolic"))
-        mod_label = Gtk.Label(xalign=0)
-        mod_label.set_markup(f"<small>Modelo: <tt>{model}</tt></small>")
-        mod_label.add_css_class("dim-label")
-        model_box.append(mod_label)
+        self._hdr_mod_label = Gtk.Label(xalign=0)
+        self._hdr_mod_label.add_css_class("dim-label")
+        model_box.append(self._hdr_mod_label)
         text_col.append(model_box)
 
         info_card.append(text_col)
@@ -129,6 +114,33 @@ class TranscribePage(Gtk.Box):
         info_card.append(btn_settings)
 
         self.append(info_card)
+
+        # Preenche labels com config atual
+        self.refresh_backend_card()
+
+    def refresh_backend_card(self) -> None:
+        """v0.2.3: re-lê config e atualiza labels do header.
+
+        Chamado após reload_config para refletir mudança de backend/modelo
+        sem precisar recriar a página.
+        """
+        cfg = load_config()
+        backend = cfg["transcriber"].get("backend", "whisper")
+        backend_label = backend.upper()
+
+        if backend == "whisper":
+            model = cfg["transcriber"]["whisper"].get("model", "?")
+        elif backend == "parakeet":
+            model = cfg["transcriber"]["parakeet"].get("model", "?")
+        elif backend == "cohere":
+            model = cfg["transcriber"]["cohere"].get("model", "?")
+        else:
+            model = "?"
+
+        if hasattr(self, "_hdr_bk_label"):
+            self._hdr_bk_label.set_markup(f"<b>Backend:</b> {backend_label}")
+        if hasattr(self, "_hdr_mod_label"):
+            self._hdr_mod_label.set_markup(f"<small>Modelo: <tt>{model}</tt></small>")
 
     def _on_open_settings(self, _btn) -> None:
         """Navega para a página Configurações na sidebar (B10: navegação por tag)."""

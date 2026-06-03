@@ -1249,8 +1249,21 @@ def _do_transcribe_step(
     transcriber = get_transcriber(actual_backend, transcriber_cfg)
 
     # Bug fix v0.2.1: capturar erro de "model.bin not found" e dar mensagem útil
+    # Bug fix v0.2.3: capturar UnicodeDecodeError ASCII codec (locale system não-UTF-8)
     try:
         result = transcriber.transcribe(audio, language=language)
+    except UnicodeDecodeError as e:
+        log.exception("UnicodeDecodeError em transcribe — locale system mal configurado")
+        return {
+            "ok": False,
+            "step": "transcribe",
+            "error": (
+                f"Erro de encoding ({e.encoding}, byte 0x{e.object[e.start]:02x}). "
+                "Locale do sistema não é UTF-8. Reinicie o daemon ou execute "
+                "'systemctl --user restart recordo' — o pacote agora força "
+                "LC_ALL=C.UTF-8."
+            ),
+        }
     except RuntimeError as e:
         msg = str(e)
         if "Unable to open file 'model.bin'" in msg or "model.bin" in msg.lower():
