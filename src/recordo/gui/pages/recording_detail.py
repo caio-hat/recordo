@@ -25,13 +25,34 @@ from ..organisms import MarkdownView
 
 log = logging.getLogger(__name__)
 
-# Tabs: (label, filename, fallback_message)
-TABS: list[tuple[str, str, str]] = [
-    ("Nota", "nota.md", "Esta gravação ainda não tem nota.md"),
-    ("Transcrição", "transcricao.txt", 'Transcrição ainda não foi gerada. Use "Re-transcrever".'),
-    ("Resumo", "summary.md", 'Resumo ainda não foi gerado. Use "Resumir".'),
-    ("Tarefas", "tasks.md", "Tarefas ainda não foram extraídas."),
-    ("Tópicos", "topics.json", "Tópicos ainda não foram extraídos."),
+# Tabs: (label, filename, fallback_message, icon_name)
+# Ícones GNOME symbolic disponíveis em todos os temas (Adwaita stock).
+TABS: list[tuple[str, str, str, str]] = [
+    ("Nota", "nota.md", "Esta gravação ainda não tem nota.md", "document-edit-symbolic"),
+    (
+        "Transcrição",
+        "transcricao.txt",
+        'Transcrição ainda não foi gerada. Use "Transcrever" no topo.',
+        "audio-input-microphone-symbolic",
+    ),
+    (
+        "Resumo",
+        "summary.md",
+        'Resumo ainda não foi gerado. Use "Resumir" no topo.',
+        "view-paged-symbolic",
+    ),
+    (
+        "Tarefas",
+        "tasks.md",
+        'Tarefas ainda não foram extraídas. Use "Tarefas" no topo.',
+        "checkbox-checked-symbolic",
+    ),
+    (
+        "Tópicos",
+        "topics.json",
+        "Tópicos ainda não foram extraídos.",
+        "view-grid-symbolic",
+    ),
 ]
 
 
@@ -100,11 +121,14 @@ class RecordingDetailPage(Adw.NavigationPage):
     # ------------------------------------------------------------------
 
     def _init_tabs(self) -> None:
-        for label, filename, fallback in TABS:
+        for label, filename, fallback, icon_name in TABS:
             view = self._build_tab(filename, fallback)
             page = self._stack.add(view)
             page.set_title(label)
             page.set_name(filename)
+            # v0.2.4 fix: set icon_name explicitamente para Adw.ViewSwitcherBar
+            # mostrar ícones reais (sem isso aparece símbolo "proibido")
+            page.set_icon_name(icon_name)
 
     def _init_actions(self) -> None:
         group = Gio.SimpleActionGroup()
