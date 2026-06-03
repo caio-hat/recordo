@@ -107,43 +107,93 @@ class ModelsPage(Gtk.Box):
         self._refresh_all()
 
     def _add_card(self, group: Adw.PreferencesGroup, info: ModelInfo, *, backend: str) -> None:
-        """Cria Adw.ActionRow para um modelo."""
-        title = info.short_name
-        if info.recommended:
-            title = f"⭐ {title}"
-        subtitle = f"{info.description} · {format_size(info.size_bytes)} · {info.languages}"
+        """Cria card responsivo para um modelo (layout vertical estável)."""
+        from gi.repository import Pango
 
-        row = Adw.ActionRow(title=title, subtitle=subtitle)
-
-        # Suffix: status label + progress bar (oculta) + botão action
-        suffix_box = Gtk.Box(
-            orientation=Gtk.Orientation.HORIZONTAL,
+        # Container card-like com hover/focus do GTK
+        outer = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
             spacing=8,
-            valign=Gtk.Align.CENTER,
+            margin_top=12,
+            margin_bottom=12,
+            margin_start=14,
+            margin_end=14,
         )
+        outer.set_hexpand(True)
 
-        progress = Gtk.ProgressBar()
-        progress.set_visible(False)
-        progress.set_size_request(120, -1)
-        progress.set_show_text(True)
-        suffix_box.append(progress)
+        # Linha 1: title + size + action button
+        title_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
 
-        status_label = Gtk.Label(label="…")
-        status_label.add_css_class("dim-label")
-        suffix_box.append(status_label)
+        title_text = info.short_name
+        if info.recommended:
+            title_text = f"⭐ {title_text}"
+        title_label = Gtk.Label(xalign=0)
+        title_label.set_markup(f"<b>{title_text}</b>")
+        title_label.set_hexpand(True)
+        title_label.set_ellipsize(Pango.EllipsizeMode.END)
+        title_label.set_valign(Gtk.Align.CENTER)
+        title_row.append(title_label)
+
+        size_label = Gtk.Label(label=format_size(info.size_bytes))
+        size_label.add_css_class("dim-label")
+        size_label.set_valign(Gtk.Align.CENTER)
+        title_row.append(size_label)
 
         btn_action = Gtk.Button(label="⬇ Baixar")
         btn_action.add_css_class("suggested-action")
+        btn_action.set_valign(Gtk.Align.CENTER)
         btn_action.connect("clicked", self._on_action_clicked, info, backend)
-        suffix_box.append(btn_action)
+        title_row.append(btn_action)
 
-        row.add_suffix(suffix_box)
+        outer.append(title_row)
+
+        # Linha 2: subtitle (wrap)
+        subtitle = f"{info.description} · {info.languages}"
+        subtitle_label = Gtk.Label(xalign=0)
+        subtitle_label.set_text(subtitle)
+        subtitle_label.add_css_class("dim-label")
+        subtitle_label.add_css_class("caption")
+        subtitle_label.set_wrap(True)
+        subtitle_label.set_xalign(0.0)
+        subtitle_label.set_max_width_chars(60)
+        outer.append(subtitle_label)
+
+        # Linha 3: progress bar + status (oculto até download começar)
+        progress_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        progress_row.set_visible(False)
+
+        progress = Gtk.ProgressBar()
+        progress.set_show_text(True)
+        progress.set_hexpand(True)
+        progress.set_valign(Gtk.Align.CENTER)
+        progress_row.append(progress)
+
+        status_label = Gtk.Label(label="")
+        status_label.add_css_class("dim-label")
+        status_label.add_css_class("caption")
+        status_label.set_max_width_chars(36)
+        status_label.set_ellipsize(Pango.EllipsizeMode.END)
+        status_label.set_valign(Gtk.Align.CENTER)
+        progress_row.append(status_label)
+
+        outer.append(progress_row)
+
+        # Wrap em PreferencesRow (subclasse de ListBoxRow que PreferencesGroup aceita)
+        row = Adw.PreferencesRow()
+        row.set_selectable(False)
+        row.set_activatable(False)
+        row.set_child(outer)
+
         group.add(row)
 
         self._cards[info.full_id] = {
             "row": row,
+            "title_label": title_label,
+            "size_label": size_label,
+            "subtitle_label": subtitle_label,
             "btn_action": btn_action,
             "progress": progress,
+            "progress_row": progress_row,
             "status_label": status_label,
             "info": info,
             "backend": backend,
@@ -206,22 +256,28 @@ class ModelsPage(Gtk.Box):
         btn = card["btn_action"]
         status = card["status_label"]
         progress = card["progress"]
+        progress_row = card.get("progress_row")
         info = card["info"]
 
         progress.set_visible(False)
+        if progress_row is not None:
+            progress_row.set_visible(False)
+        # status fora do progress_row só mostra texto curto inline (ou vazio)
+        status.set_text("")
 
         if installed:
             size_str = format_size(size_used) if size_used > 0 else format_size(info.size_bytes)
-            status.set_markup(f"<small>✓ Instalado · {size_str}</small>")
-            status.remove_css_class("dim-label")
-            status.add_css_class("success")
+            # Mudar label do "size" para mostrar instalado
+            card["size_label"].set_markup(f"<small>✓ {size_str}</small>")
+            card["size_label"].remove_css_class("dim-label")
+            card["size_label"].add_css_class("success")
             btn.set_label("✕ Remover")
             btn.remove_css_class("suggested-action")
             btn.add_css_class("destructive-action")
         else:
-            status.set_markup(f"<small>{format_size(info.size_bytes)}</small>")
-            status.add_css_class("dim-label")
-            status.remove_css_class("success")
+            card["size_label"].set_text(format_size(info.size_bytes))
+            card["size_label"].add_css_class("dim-label")
+            card["size_label"].remove_css_class("success")
             btn.set_label("⬇ Baixar")
             btn.add_css_class("suggested-action")
             btn.remove_css_class("destructive-action")
@@ -283,6 +339,7 @@ class ModelsPage(Gtk.Box):
         card["btn_action"].set_label("⏸ Cancelar")
         card["btn_action"].remove_css_class("suggested-action")
         card["btn_action"].add_css_class("destructive-action")
+        card["progress_row"].set_visible(True)
         card["progress"].set_visible(True)
         card["progress"].set_fraction(0.0)
         card["progress"].set_text("0%")

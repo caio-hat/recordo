@@ -81,7 +81,7 @@ class DashboardPage(Adw.NavigationPage):
         scrolled = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
         toolbar.set_content(scrolled)
 
-        clamp = Adw.Clamp(maximum_size=720, tightening_threshold=600)
+        clamp = Adw.Clamp(maximum_size=1100, tightening_threshold=900)
         scrolled.set_child(clamp)
 
         content = Gtk.Box(
