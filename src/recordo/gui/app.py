@@ -513,7 +513,7 @@ class RecordoApp(Adw.Application):
         self.window._update_daemon_status()
 
     def _restart_daemon(self, *_):
-        """A1: encerra daemon, espera, reinicia."""
+        """A1: encerra daemon, espera, reinicia. (Bug fix v0.2.2: feedback claro)"""
         from gi.repository import GLib
 
         from .. import client as client_mod
@@ -525,17 +525,38 @@ class RecordoApp(Adw.Application):
         self.window.toast("Reiniciando daemon...")
 
         def on_quit_resp(_resp: dict) -> None:
-            # Aguarda 1.5s para o socket sumir, depois ensure_daemon
             def _do_restart():
                 import time
 
-                # Espera socket fechar (até 5s)
+                # Espera socket fechar (até 5s). Se não fechar, força tentativa.
+                socket_closed = False
                 for _ in range(20):
                     if not client_mod.is_daemon_alive():
+                        socket_closed = True
                         break
                     time.sleep(0.25)
+
+                # Limpa lockfile/socket stale antes de spawnar novamente
+                # (daemon antigo pode ter morrido sem cleanup)
+                from ..config import SOCKET_PATH
+
+                if SOCKET_PATH.exists() and not client_mod.is_daemon_alive():
+                    try:
+                        SOCKET_PATH.unlink()
+                    except OSError:
+                        pass
+
                 ok = client_mod.ensure_daemon()
-                GLib.idle_add(self._on_daemon_restarted, ok)
+                err_detail = (
+                    ""
+                    if ok
+                    else (
+                        "ensure_daemon retornou False após quit. "
+                        f"socket_closed={socket_closed}. "
+                        "Veja /tmp/recordo.daemon.log para detalhes."
+                    )
+                )
+                GLib.idle_add(self._on_daemon_restarted, ok, err_detail)
                 return False
 
             import threading
@@ -544,11 +565,52 @@ class RecordoApp(Adw.Application):
 
         call_async("quit", on_quit_resp)
 
-    def _on_daemon_restarted(self, ok: bool) -> None:
+    def _on_daemon_restarted(self, ok: bool, err_detail: str = "") -> None:
         if not self.window:
             return
-        self.window.toast("✓ Daemon reiniciado" if ok else "⚠ Falha no restart")
+        if ok:
+            self.window.toast("✓ Daemon reiniciado")
+        else:
+            self.window.toast("⚠ Falha no restart")
+            # Bug fix v0.2.2: dialog modal com detalhes do erro
+            self._show_daemon_error_dialog("Restart falhou", err_detail)
         self.window._update_daemon_status()
+
+    def _show_daemon_error_dialog(self, action: str, detail: str) -> None:
+        """v0.2.2: dialog detalhado quando ação de daemon falha."""
+        from html import escape
+
+        title = f"❌ {action}"
+        body_lines = [
+            "<b>O daemon não respondeu ou falhou ao iniciar.</b>\n",
+            "<b>Possíveis causas:</b>",
+            "  • Outro processo do daemon ainda finalizando",
+            "  • Socket UNIX órfão em /run/user/1000/recordo.sock",
+            "  • systemd unit em estado de falha (verifique <tt>systemctl --user status recordo</tt>)",
+            "  • Erro fatal no código — veja /tmp/recordo.daemon.log",
+        ]
+        if detail:
+            body_lines.append(f"\n<b>Detalhe técnico:</b>\n<tt>{escape(detail)}</tt>")
+
+        body = "\n".join(body_lines)
+        dlg = Adw.MessageDialog.new(self.window, title, body)
+        dlg.set_body_use_markup(True)
+        dlg.add_response("close", "Fechar")
+        dlg.add_response("logs", "Abrir log do daemon")
+        dlg.set_default_response("close")
+        dlg.set_close_response("close")
+        dlg.connect("response", self._on_daemon_error_response)
+        dlg.present()
+
+    @staticmethod
+    def _on_daemon_error_response(_dlg, response: str) -> None:
+        if response == "logs":
+            import subprocess
+
+            try:
+                subprocess.Popen(["xdg-open", "/tmp/recordo.daemon.log"])
+            except FileNotFoundError:
+                pass
 
     def _reload_config(self, *_):
         from .async_client import call_async

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import socket
 import subprocess
@@ -11,6 +12,8 @@ import time
 from typing import Any
 
 from .config import SOCKET_PATH, Timeouts
+
+log = logging.getLogger(__name__)
 
 
 def send_to_daemon(cmd: str, **kwargs: Any) -> dict:
@@ -62,6 +65,7 @@ def ensure_daemon(timeout: float | None = None, *, prefer_systemd: bool = True) 
         return True
 
     started = False
+    last_error: str = ""
     if prefer_systemd:
         try:
             r = subprocess.run(
@@ -71,19 +75,27 @@ def ensure_daemon(timeout: float | None = None, *, prefer_systemd: bool = True) 
                 timeout=3,
             )
             if r.returncode == 0 and "recordo.service" in r.stdout:
-                subprocess.run(
+                start_r = subprocess.run(
                     ["systemctl", "--user", "start", "recordo"],
                     capture_output=True,
                     text=True,
                     timeout=5,
                 )
-                started = True
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
+                # Bug fix v0.2.2: `started=True` só se systemctl start REALMENTE funcionou
+                # Antes assumia sucesso silenciosamente
+                if start_r.returncode == 0:
+                    started = True
+                else:
+                    last_error = (
+                        f"systemctl start recordo falhou (rc={start_r.returncode}): "
+                        f"{(start_r.stderr or start_r.stdout)[:200]}"
+                    )
+                    log.warning(last_error)
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            last_error = f"systemctl indisponível ou timeout: {e}"
 
     if not started:
-        # Spawn detached: o daemon é child do PID atual e sobrevive ao exit
-        # do client (pelo setsid + double-fork-like via Popen + close_fds).
+        # Fallback spawn — Popen detached
         log_path = "/tmp/recordo.daemon.log"
         try:
             with open(log_path, "ab") as log_fd:  # B3: context manager evita leak
@@ -95,7 +107,8 @@ def ensure_daemon(timeout: float | None = None, *, prefer_systemd: bool = True) 
                     start_new_session=True,
                     close_fds=True,
                 )
-        except OSError:
+        except OSError as e:
+            log.error("ensure_daemon: spawn falhou: %s. systemctl último erro: %s", e, last_error)
             return False
 
     # Polling até 8s (suficiente p/ asyncio.start_unix_server)

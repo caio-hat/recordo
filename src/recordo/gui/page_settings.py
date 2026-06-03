@@ -224,6 +224,8 @@ class SettingsPage(Gtk.ScrolledWindow):
             ml = Gtk.StringList.new([*WHISPER_MODELS, cur])
             self.whisper_model_row.set_model(ml)
             self.whisper_model_row.set_selected(len(WHISPER_MODELS))
+        # Bug fix v0.2.2: trocar modelo no dropdown atualiza hint imediatamente
+        self.whisper_model_row.connect("notify::selected", self._on_whisper_model_changed)
         self._whisper_group.add(self.whisper_model_row)
 
         self.whisper_device_row = Adw.ComboRow(title="Device")
@@ -555,11 +557,23 @@ class SettingsPage(Gtk.ScrolledWindow):
         """M2: chamado quando user muda combobox de backend."""
         self._check_model_hint()
 
-    def _check_model_hint(self) -> None:
-        """M2: mostra hint se backend selecionado tem modelo não baixado.
+    def _on_whisper_model_changed(self, *_args) -> None:
+        """Bug fix v0.2.2: atualiza hint quando user troca dropdown."""
+        self._check_model_hint()
 
-        Bug fix v0.2.1: aceita HuggingFace IDs custom (ex: jlondonobo/whisper-large-v2-pt)
-        que não estão no registry. Detecta via is_whisper_installed direto no HF cache.
+    def _get_current_whisper_model_id(self) -> str:
+        """v0.2.2: lê o modelo SELECIONADO no dropdown agora (não do config salvo)."""
+        if not hasattr(self, "whisper_model_row"):
+            return self.cfg["transcriber"]["whisper"].get("model", "large-v3-turbo")
+        ml = self.whisper_model_row.get_model()
+        idx = self.whisper_model_row.get_selected()
+        if ml is None or idx < 0:
+            return self.cfg["transcriber"]["whisper"].get("model", "large-v3-turbo")
+        return ml.get_string(idx) or "large-v3-turbo"
+
+    def _check_model_hint(self) -> None:
+        """v0.2.2: hint reflete o modelo SELECIONADO agora no dropdown,
+        não o config salvo. Aceita HuggingFace IDs custom (jlondonobo/...).
         """
         from ..models import (
             is_parakeet_installed,
@@ -567,28 +581,34 @@ class SettingsPage(Gtk.ScrolledWindow):
         )
         from ..models_registry import (
             PARAKEET_MODELS,
-            WHISPER_MODELS,
+        )
+        from ..models_registry import (
+            WHISPER_MODELS as WM_REGISTRY,
         )
 
         sel_backend = TRANSCRIBE_BACKENDS[self.tr_backend_row.get_selected()]
 
         if sel_backend == "cohere":
-            # Cohere é API, sem download
             self.tr_model_hint_row.set_visible(False)
             return
 
         if sel_backend == "whisper":
-            model_short_or_id = self.cfg["transcriber"]["whisper"].get("model", "large-v3-turbo")
-            info = WHISPER_MODELS.get(model_short_or_id)
+            # v0.2.2: lê do dropdown atual, não do config
+            model_id = self._get_current_whisper_model_id()
+            info = WM_REGISTRY.get(model_id)
             if info:
-                # Modelo do registry (Systran/...)
-                installed = is_whisper_installed(info.full_id)
+                full_id = info.full_id
                 model_display = info.short_name
+            elif "/" in model_id:
+                # HuggingFace ID custom (jlondonobo/whisper-large-v2-pt)
+                full_id = model_id
+                model_display = model_id
             else:
-                # Modelo custom (HF ID direto, ex: jlondonobo/whisper-large-v2-pt)
-                # is_whisper_installed aceita full HF ID
-                installed = is_whisper_installed(model_short_or_id)
-                model_display = model_short_or_id
+                # Shortname genérico (ex: distil-large-v3) → tenta Systran/faster-whisper-{name}
+                full_id = f"Systran/faster-whisper-{model_id}"
+                model_display = model_id
+
+            installed = is_whisper_installed(full_id)
             backend_label = "Whisper"
         elif sel_backend == "parakeet":
             model_full = self.cfg["transcriber"]["parakeet"].get("model", "nvidia/parakeet-tdt-0.6b-v3")
@@ -604,15 +624,14 @@ class SettingsPage(Gtk.ScrolledWindow):
             self.tr_model_hint_row.set_visible(False)
             return
 
-        # Modelo não instalado: mostra warning + sugestão
+        # Modelo não instalado
         self.tr_model_hint_row.set_title(f"⚠ Modelo {backend_label} '{model_display}' não baixado")
-        if info:
-            self.tr_model_hint_row.set_subtitle("Baixe via Models Manager para usar este backend.")
-        else:
-            # Custom HF ID que não está no Models Manager
+        if sel_backend == "whisper" and "/" in model_display:
             self.tr_model_hint_row.set_subtitle(
-                f"Modelo HuggingFace custom — baixe manualmente: huggingface-cli download {model_display}"
+                "Modelo HuggingFace custom — baixe via Models Manager (botão ao lado)"
             )
+        else:
+            self.tr_model_hint_row.set_subtitle("Baixe via Models Manager para usar este backend.")
         self.tr_model_hint_row.set_visible(True)
 
     def _on_open_models_page(self, _btn) -> None:

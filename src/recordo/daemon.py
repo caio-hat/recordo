@@ -417,28 +417,33 @@ class Daemon:
     async def _cmd_reload_config(self, req: dict) -> dict:
         """Re-lê config.toml e atualiza atributos.
 
-        Aplica imediatamente em parâmetros sem efeito retroativo (bitrate, layout,
-        max_segment se nova gravação). Gravação em curso mantém valores que
-        começou (evita merge inconsistente).
+        Bug fix v0.2.2: deep-diff de TODA a config (antes só 4 campos legacy
+        eram detectados; mudanças em transcriber/summarizer/parakeet/etc
+        retornavam 'nada mudou' incorretamente).
         """
         from datetime import datetime
 
+        old_cfg = self.config
         new_cfg = load_config()
-        changed = []
-        if new_cfg["recording"]["bitrate"] != self.bitrate:
-            changed.append(f"bitrate: {self.bitrate} → {new_cfg['recording']['bitrate']}")
-            self.bitrate = new_cfg["recording"]["bitrate"]
-        if new_cfg["recording"]["layout"] != self.layout:
-            changed.append(f"layout: {self.layout} → {new_cfg['recording']['layout']}")
-            self.layout = new_cfg["recording"]["layout"]
-        if new_cfg["recording"]["max_segment"] != self.max_segment:
-            changed.append(f"max_segment: {self.max_segment} → {new_cfg['recording']['max_segment']}")
-            self.max_segment = new_cfg["recording"]["max_segment"]
-        if new_cfg["transcriber"]["language"] != self.language:
-            changed.append(f"language: {self.language} → {new_cfg['transcriber']['language']}")
-            self.language = new_cfg["transcriber"]["language"]
+        changed: list[str] = []
+
+        # Deep diff via paths (recording.bitrate, transcriber.parakeet.model, etc.)
+        diff_paths = _diff_config(old_cfg, new_cfg)
+        for path, old_val, new_val in diff_paths:
+            # Mascarar API keys — não vazar nos logs
+            if "api_key" in path.lower() or "key" in path.lower():
+                changed.append(f"{path}: ***changed***")
+            else:
+                changed.append(f"{path}: {old_val!r} → {new_val!r}")
+
+        # Atualiza atributos cached (bitrate/layout/etc usados in-flight)
+        self.bitrate = new_cfg["recording"]["bitrate"]
+        self.layout = new_cfg["recording"]["layout"]
+        self.max_segment = new_cfg["recording"]["max_segment"]
+        self.language = new_cfg["transcriber"]["language"]
         self.config = new_cfg
-        log.info("config recarregada: %s", changed or "nada mudou")
+
+        log.info("config recarregada: %d mudança(s) %s", len(changed), changed or "(nada mudou)")
         return {
             "ok": True,
             "reloaded_at": datetime.now().isoformat(timespec="seconds"),
@@ -712,3 +717,33 @@ class Daemon:
                     except TimeoutError:
                         proc.kill()
             await asyncio.sleep(Timeouts.DAEMON_PACTL_RECONNECT_SEC)  # backoff antes de re-subscrever
+
+
+def _diff_config(old: dict, new: dict, prefix: str = "") -> list[tuple[str, object, object]]:
+    """v0.2.2: deep diff entre 2 configs (bug 'nada mudou' fix).
+
+    Retorna lista de tuplas (path, old_value, new_value) de TODAS as
+    mudanças encontradas recursivamente. Skip de paths internos que não
+    interessam ao user (last_window_geometry, etc).
+    """
+    SKIP_KEYS = {"last_window_geometry"}
+    diffs: list[tuple[str, object, object]] = []
+
+    if not isinstance(old, dict) or not isinstance(new, dict):
+        if old != new:
+            diffs.append((prefix or "(root)", old, new))
+        return diffs
+
+    all_keys = set(old.keys()) | set(new.keys())
+    for k in sorted(all_keys):
+        if k in SKIP_KEYS:
+            continue
+        path = f"{prefix}.{k}" if prefix else k
+        ov = old.get(k)
+        nv = new.get(k)
+        if isinstance(ov, dict) or isinstance(nv, dict):
+            diffs.extend(_diff_config(ov or {}, nv or {}, path))
+        else:
+            if ov != nv:
+                diffs.append((path, ov, nv))
+    return diffs

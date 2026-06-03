@@ -295,6 +295,9 @@ class ModelsPage(Gtk.Box):
             GLib.idle_add(self._on_progress, info, pct, msg)
 
         def worker():
+            # Bug fix v0.2.2: capturar exceção e propagar mensagem real ao user
+            err_msg = ""
+            ok = False
             try:
                 if backend == "whisper":
                     ok = download_whisper(info.full_id, on_progress=progress_cb, cancel_event=cancel_evt)
@@ -303,11 +306,14 @@ class ModelsPage(Gtk.Box):
                 elif backend == "ollama":
                     ok = download_ollama(info.full_id, on_progress=progress_cb, cancel_event=cancel_evt)
                 else:
-                    ok = False
+                    err_msg = f"backend desconhecido: {backend}"
+                if not ok and not err_msg:
+                    err_msg = "download retornou False (sem detalhes — veja /tmp/recordo.gui.log)"
             except Exception as e:
-                log.exception("download falhou: %s", e)
+                log.exception("download %s falhou: %s", info.full_id, e)
+                err_msg = f"{type(e).__name__}: {e}"
                 ok = False
-            GLib.idle_add(self._on_download_done, info, ok)
+            GLib.idle_add(self._on_download_done, info, ok, err_msg)
 
         # Re-binda btn pra cancelar
         try:
@@ -336,7 +342,7 @@ class ModelsPage(Gtk.Box):
             evt.set()
             self.window.toast(f"⏸ Cancelando {info.short_name}…")
 
-    def _on_download_done(self, info: ModelInfo, ok: bool) -> bool:
+    def _on_download_done(self, info: ModelInfo, ok: bool, err_msg: str = "") -> bool:
         card = self._cards.get(info.full_id)
         if card is None:
             return False
@@ -346,7 +352,9 @@ class ModelsPage(Gtk.Box):
         if ok:
             self.window.toast(f"✓ {info.short_name} instalado")
         else:
+            # Bug fix v0.2.2: dialog modal com erro real (era só toast genérico)
             self.window.toast(f"⚠ Falha ao baixar {info.short_name}")
+            self._show_download_error_dialog(info, err_msg)
 
         # Reconectar handler normal
         try:
@@ -356,4 +364,31 @@ class ModelsPage(Gtk.Box):
         card["btn_action"].connect("clicked", self._on_action_clicked, info, card["backend"])
 
         self._refresh_all()
+
+    def _show_download_error_dialog(self, info: ModelInfo, err_msg: str) -> None:
+        """Bug fix v0.2.2: dialog com detalhes do erro (era toast genérico)."""
+        from html import escape
+
+        title = f"❌ Falha ao baixar {info.short_name}"
+        body_lines = [
+            f"<b>Modelo:</b> {escape(info.full_id)}",
+            f"<b>Tamanho esperado:</b> {format_size(info.size_bytes)}",
+        ]
+        if err_msg:
+            body_lines.append(f"\n<b>Erro:</b>\n<tt>{escape(err_msg[:600])}</tt>")
+        else:
+            body_lines.append(
+                "\n<i>Nenhuma mensagem de erro capturada — verifique:</i>\n"
+                "  • Internet/conexão ao HuggingFace ou Ollama\n"
+                "  • Espaço em disco suficiente (~/.cache/huggingface)\n"
+                "  • Logs em /tmp/recordo.gui.log e /tmp/recordo.daemon.log"
+            )
+
+        body = "\n".join(body_lines)
+        dlg = Adw.MessageDialog.new(self.window, title, body)
+        dlg.set_body_use_markup(True)
+        dlg.add_response("close", "Fechar")
+        dlg.set_default_response("close")
+        dlg.set_close_response("close")
+        dlg.present()
         return False
