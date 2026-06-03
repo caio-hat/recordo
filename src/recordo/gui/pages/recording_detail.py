@@ -51,9 +51,34 @@ class RecordingDetailPage(Adw.NavigationPage):
         header = Adw.HeaderBar()
         toolbar.add_top_bar(header)
 
-        # Menu ⋮
+        # Botões de ação visíveis no header (substitui menu escondido)
+        # v0.2.4: user reportou que botões de gerar/transcrever sumiram com redesign.
+        self._btn_transcribe = Gtk.Button(label="✎ Transcrever")
+        self._btn_transcribe.set_tooltip_text("Gerar transcrição (faster-whisper / parakeet)")
+        self._btn_transcribe.add_css_class("flat")
+        self._btn_transcribe.connect("clicked", lambda _b: self._run_pipeline_step("transcribe"))
+        header.pack_start(self._btn_transcribe)
+
+        self._btn_summarize = Gtk.Button(label="📝 Resumir")
+        self._btn_summarize.set_tooltip_text("Gerar resumo via LLM (Ollama / Gemini)")
+        self._btn_summarize.add_css_class("flat")
+        self._btn_summarize.connect("clicked", lambda _b: self._run_pipeline_step("summarize"))
+        header.pack_start(self._btn_summarize)
+
+        self._btn_tasks = Gtk.Button(label="✅ Tarefas")
+        self._btn_tasks.set_tooltip_text("Extrair tarefas via LLM")
+        self._btn_tasks.add_css_class("flat")
+        self._btn_tasks.connect("clicked", lambda _b: self._run_pipeline_step("tasks"))
+        header.pack_start(self._btn_tasks)
+
+        # Spinner pra mostrar pipeline rodando
+        self._action_spinner = Gtk.Spinner()
+        self._action_spinner.set_visible(False)
+        header.pack_start(self._action_spinner)
+
+        # Menu ⋮ (overflow: pasta, editor, etc)
         menu_btn = Gtk.MenuButton(icon_name="open-menu-symbolic")
-        menu_btn.set_tooltip_text("Ações")
+        menu_btn.set_tooltip_text("Mais ações")
         menu_btn.set_menu_model(self._build_menu_model())
         header.pack_end(menu_btn)
 
@@ -153,20 +178,77 @@ class RecordingDetailPage(Adw.NavigationPage):
         self._run_pipeline_step("tasks")
 
     def _run_pipeline_step(self, step: str) -> None:
-        """Roda step do pipeline em thread, recarrega tabs ao final."""
+        """Roda step do pipeline em thread, recarrega tabs ao final.
+
+        v0.2.4: feedback visual via spinner + botões desabilitados durante execução.
+        """
+        # Bloqueia botões e mostra spinner
+        self._set_action_buttons_busy(True, step)
 
         def worker() -> None:
+            error_msg = ""
+            ok = False
             try:
                 from ...config import load_config
                 from ...pipeline import run_step  # type: ignore[attr-defined]
 
                 cfg = load_config()
-                run_step(self._rec_dir, step, config=cfg)
-            except Exception:
+                result = run_step(self._rec_dir, step, config=cfg)
+                ok = bool(result.get("ok"))
+                if not ok:
+                    error_msg = str(result.get("error", "erro desconhecido"))
+            except Exception as e:
                 log.exception("run_step %s falhou", step)
-            GLib.idle_add(self._reload_tabs)
+                error_msg = f"{type(e).__name__}: {e}"
+            GLib.idle_add(self._on_pipeline_done, step, ok, error_msg)
 
         threading.Thread(target=worker, daemon=True, name=f"recordo-detail-{step}").start()
+
+    def _set_action_buttons_busy(self, busy: bool, current_step: str = "") -> None:
+        """Desabilita botões + mostra spinner durante operação longa."""
+        for btn in (self._btn_transcribe, self._btn_summarize, self._btn_tasks):
+            btn.set_sensitive(not busy)
+        self._action_spinner.set_visible(busy)
+        if busy:
+            self._action_spinner.start()
+        else:
+            self._action_spinner.stop()
+
+    def _on_pipeline_done(self, step: str, ok: bool, error_msg: str) -> bool:
+        self._set_action_buttons_busy(False)
+        self._reload_tabs()
+
+        # Toast no parent window se disponível
+        root = self.get_root()
+        if root is not None and hasattr(root, "toast"):
+            step_label = {"transcribe": "Transcrição", "summarize": "Resumo", "tasks": "Tarefas"}.get(
+                step, step
+            )
+            if ok:
+                root.toast(f"✓ {step_label} pronta")
+            else:
+                # Mostra dialog com erro real (não só toast)
+                self._show_step_error_dialog(step_label, error_msg)
+        return GLib.SOURCE_REMOVE
+
+    def _show_step_error_dialog(self, step_label: str, err_msg: str) -> None:
+        from html import escape
+
+        title = f"❌ {step_label} falhou"
+        body = (
+            f"<b>Não foi possível concluir.</b>\n\n"
+            f"<b>Erro:</b>\n<tt>{escape(err_msg[:600])}</tt>\n\n"
+            "<b>Possíveis causas:</b>\n"
+            "  • Modelo não baixado — abra Modelos no menu lateral\n"
+            "  • Memória insuficiente — verifique Sistema no Dashboard\n"
+            "  • Daemon offline — reinicie via menu superior"
+        )
+        dlg = Adw.MessageDialog.new(self.get_root(), title, body)
+        dlg.set_body_use_markup(True)
+        dlg.add_response("close", "Fechar")
+        dlg.set_default_response("close")
+        dlg.set_close_response("close")
+        dlg.present()
 
     def _reload_tabs(self) -> bool:
         """Reconstrói tabs com conteúdo atualizado."""

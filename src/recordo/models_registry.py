@@ -76,8 +76,10 @@ WHISPER_MODELS: dict[str, ModelInfo] = {
     ),
     "large-v3-turbo": ModelInfo(
         short_name="large-v3-turbo",
-        full_id="Systran/faster-whisper-large-v3-turbo",
-        size_bytes=1500 * 1024 * 1024,
+        # v0.2.4 fix: Systran/faster-whisper-large-v3-turbo NÃO existe no HF.
+        # mobiuslabsgmbh/faster-whisper-large-v3-turbo é o canonical, ~1.6GB.
+        full_id="mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+        size_bytes=1620 * 1024 * 1024,
         languages="99 idiomas",
         description="Recomendado: 3x mais rápido que large-v3 com qualidade próxima",
         recommended=True,

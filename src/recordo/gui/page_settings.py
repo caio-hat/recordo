@@ -671,8 +671,14 @@ class SettingsPage(Gtk.ScrolledWindow):
                 full_id = model_id
                 model_display = model_id
             else:
-                # Shortname genérico (ex: distil-large-v3) → tenta Systran/faster-whisper-{name}
-                full_id = f"Systran/faster-whisper-{model_id}"
+                # Shortname genérico — usa mapping interno do faster-whisper
+                # (ex: distil-large-v3 → Systran/faster-distil-whisper-large-v3)
+                try:
+                    from faster_whisper.utils import _MODELS as FW_MODELS
+
+                    full_id = FW_MODELS.get(model_id, f"Systran/faster-whisper-{model_id}")
+                except ImportError:
+                    full_id = f"Systran/faster-whisper-{model_id}"
                 model_display = model_id
 
             installed = is_whisper_installed(full_id)
@@ -702,14 +708,24 @@ class SettingsPage(Gtk.ScrolledWindow):
         self.tr_model_hint_row.set_visible(True)
 
     def _on_open_models_page(self, _btn) -> None:
-        """M2: navega para aba Models na sidebar."""
+        """v0.2.4: navega via NavigationView (sidebar não existe mais)."""
         try:
-            row = self.window.listbox.get_first_child()
-            while row is not None:
-                if getattr(row, "tag", None) == "models":
-                    self.window.listbox.select_row(row)
-                    return
-                row = row.get_next_sibling()
+            # Tenta novo fluxo (RecordoWindow tem _open_models)
+            if hasattr(self.window, "_open_models"):
+                # Volta para dashboard primeiro (se estamos em Settings sub-page)
+                nav = getattr(self.window, "nav_view", None)
+                if nav is not None and hasattr(nav, "pop_to_tag"):
+                    nav.pop_to_tag("dashboard")
+                self.window._open_models()
+                return
+            # Fallback legado (caso ainda exista listbox)
+            if hasattr(self.window, "listbox"):
+                row = self.window.listbox.get_first_child()
+                while row is not None:
+                    if getattr(row, "tag", None) == "models":
+                        self.window.listbox.select_row(row)
+                        return
+                    row = row.get_next_sibling()
         except Exception:
             log.exception("falha navegar para Models Manager")
 

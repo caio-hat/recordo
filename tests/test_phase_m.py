@@ -27,7 +27,7 @@ class TestModelsRegistry:
         for info in WHISPER_MODELS.values():
             assert isinstance(info, ModelInfo)
             assert info.short_name
-            assert info.full_id.startswith("Systran/")
+            assert info.full_id.startswith(("Systran/", "mobiuslabsgmbh/"))
             assert info.size_bytes > 0
             assert info.languages
             assert info.description
