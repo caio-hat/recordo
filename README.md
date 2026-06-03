@@ -27,13 +27,20 @@ Bonus: pós-gravação é 100% automático. Áudio Opus, transcrição via faste
 - 🔴 **Toggle global** `Super+R` — start/stop sem terminal
 - 📍 **Marcar momento** `Super+Shift+M` — registra timestamp + nota opcional
 - 🎛️ **TUI moderna** (`recordo --tui`) — painéis live com Textual + auto-conecta no daemon
-- 🖼️ **GUI desktop** (`recordo --gui`) — GTK4 + libadwaita, sidebar com Status / Controle / Settings / Transcrever
+- 🖼️ **GUI desktop** (`recordo --gui`) — GTK4 + libadwaita, dashboard único com NavigationView
 - 🎙️ **Auto-detecção de fontes** — Bluetooth > USB > builtin, mic + system loopback
 - 🎚️ **Auto-detect call** (opt-in) — event-driven via `pactl subscribe`, detecta Teams/Meet/Zoom/Slack/Discord usando mic e grava sozinho
 - 🤖 **Auto-subject** — pega título da janela ativa (X11 ou Wayland: sway/i3/hyprland)
+- 🏷️ **Auto-extração nome de reunião** — regex patterns para Teams/Zoom/Meet/Webex/Discord/Slack
 - 💾 **Codec Opus 32 kbps** — 10× menos CPU que MP3, ~6× menor em disco; concat com `-c copy` (zero reencode quando layout é homogêneo)
 - 🔇 **Watchdog inteligente** — `parec` mede mic em paralelo (não disputa com captura); para sozinho após 10min mudo, cap absoluto 4h
-- 📝 **Transcrição automática** via faster-whisper (pt-BR local, sem cloud) — backend pluggable (Whisper ou Parakeet via NeMo)
+- 📝 **Transcrição automática** via faster-whisper (pt-BR local, sem cloud) — backend pluggable (Whisper ou Parakeet ONNX via sherpa-onnx)
+- 🦜 **Parakeet ONNX** (sherpa-onnx) — ~2GB RAM peak vs 6-8GB do NeMo, backend default
+- 🖥️ **Hardware preflight** — RAM/CPU/GPU detect + recomendação automática de backend + fallback
+- 📖 **Renderização markdown integrada** — tabs Nota/Transcrição/Resumo/Tarefas via WebKit (substitui abrir pasta no Files)
+- 🧙 **Onboarding wizard** — 3 passos no primeiro uso (backend, hardware check, atalhos)
+- ⚙️ **Configurações avançadas Ollama** — think/temperature/top_p/top_k/num_ctx/repeat_penalty/seed
+- 📊 **Dashboard único** — substitui sidebar 5-abas; sub-pages via NavigationView push()
 - 🗂️ **Pós-pipeline** — move pra `~/Notas/<data>_<assunto>/` com `nota.md` + frontmatter YAML
 - 🚀 **Daemon systemd** — sempre vivo, latência ~zero no toggle
 - 🧠 **Integração Vicinae** — 4 comandos (toggle/status/last/mark)
@@ -58,7 +65,7 @@ Após instalar, **logout/login** ou `cinnamon --replace &` pra Cinnamon recarreg
 - Cinnamon (opcional — keybindings; outros DEs funcionam sem hotkey)
 - Vicinae (opcional — integração launcher)
 
-Setup auto-instala via apt: `ffmpeg`, `pulseaudio-utils` (inclui `parec` usado pelo watchdog de silêncio), `libnotify-bin`, `xdotool`, `zenity`, `dconf-cli`, `wmctrl`, `socat`, `jq`, `xdg-utils`, `python3-venv`. Para a GUI GTK4: `python3-gi`, `gir1.2-gtk-4.0`, `gir1.2-adw-1`. Em Wayland (sway/i3/hyprland), também detecta `swaymsg`/`hyprctl` para captura de janela ativa.
+Setup auto-instala via apt: `ffmpeg`, `pulseaudio-utils` (inclui `parec` usado pelo watchdog de silêncio), `libnotify-bin`, `xdotool`, `zenity`, `dconf-cli`, `wmctrl`, `socat`, `jq`, `xdg-utils`, `python3-venv`. Para a GUI GTK4: `python3-gi`, `gir1.2-gtk-4.0`, `gir1.2-adw-1`. Para o markdown viewer integrado: `gir1.2-webkit2-4.1`. Em Wayland (sway/i3/hyprland), também detecta `swaymsg`/`hyprctl` para captura de janela ativa.
 
 ## Uso
 
@@ -68,7 +75,7 @@ Setup auto-instala via apt: `ffmpeg`, `pulseaudio-utils` (inclui `parec` usado p
 | Marcar momento | `Super+Shift+M` (ou `recordo --mark "nota"`) |
 | Status atual | `recordo --status` |
 | TUI moderna (Textual) | `recordo --tui` — auto-conecta no daemon |
-| GUI desktop (GTK4) | `recordo --gui` — sidebar + páginas |
+| GUI desktop (GTK4) | `recordo --gui` — dashboard + páginas |
 | Listar dispositivos | `recordo --list-devices` |
 | Recarregar config | `recordo --reload-config` (sem restart do daemon) |
 
@@ -167,16 +174,17 @@ bash uninstall.sh --purge
                                                             ↓
                                                     post_pipeline → ~/Notas/
                                                             ↓
-                                                  thread: faster-whisper
+                                                  thread: faster-whisper / sherpa-onnx
+                                                            ↓
+                                                  thread: ollama LLM (resumo + tarefas)
 ```
 
 Detalhes em [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Roadmap
 
-- **v0.1.0** (atual): daemon + hotkeys + auto-detect + Vicinae integration
-- **v0.2.0**: applet Cinnamon (`grava-audio@caio-hat`) — controle visual no painel
-- **v0.3.0**: GTK settings UI standalone
+- **v0.2.4** (atual): Parakeet ONNX, hardware preflight, dashboard redesign, markdown viewer integrado, onboarding wizard
+- **v0.3.0**: GTK headerbar status indicator, suite E2E ampliada
 - **v0.4.0**: integração calendário (auto-detect call agendada)
 
 Detalhes em [ROADMAP.md](ROADMAP.md).
@@ -192,6 +200,18 @@ make lint            # ruff
 make format          # ruff format
 make shellcheck      # bash scripts
 ```
+
+## Arquitetura UI (Atomic Design)
+
+Todos componentes seguem hierarquia componível para facilitar manutenção
+e geração por LLMs:
+
+- `gui/atoms/` — widgets básicos (StatusBadge, Heading, ActionButton, PulseDot, progress.LinearBar/Spinner/StepProgress)
+- `gui/molecules/` — composições de atoms (Card, EmptyState, InfoDialog, ConfirmDialog)
+- `gui/organisms/` — components com lógica via callbacks (HardwareCard, RecordingCard, MarkdownView)
+- `gui/pages/` — telas top-level (Dashboard, Settings, Models, Logs, RecordingDetail)
+- `gui/wizards/` — fluxos guiados (Onboarding)
+- `gui/theme.css` — design tokens centralizados (cores, espaçamento, tipografia)
 
 ## License
 

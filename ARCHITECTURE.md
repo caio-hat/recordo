@@ -1,6 +1,6 @@
-# Architecture
+# Recordo Architecture
 
-## Visão geral
+## High-level overview
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -77,6 +77,77 @@
 │      - notify "✓ Nota disponível"                                │
 └──────────────────────────────────────────────────────────────────┘
 ```
+
+## Components
+
+### Backend (Python)
+- **`daemon.py`** — asyncio server, UNIX socket comm, tray spawning, auto-detect loop
+- **`recorder.py`** — ffmpeg subprocess management, segment splitting (max_segment)
+- **`pipeline.py`** — post-recording: transcribe → summarize → tasks (each as run_step)
+- **`transcribers/`** — Whisper (faster-whisper), Parakeet ONNX (sherpa-onnx, default), Cohere API
+- **`summarizer/`** — Ollama local LLM, Gemini cloud, heuristic fallback
+- **`hardware.py`** — RAM/CPU/GPU probe + backend recommendations + preflight check
+- **`meeting_name.py`** — regex extraction from window titles
+- **`models_registry.py`** — Whisper/Parakeet/Ollama models metadata + ram_required_mb
+
+### Frontend (GTK4 + libadwaita)
+Atomic Design hierarchy:
+```
+gui/
+├── atoms/         (5 widgets básicos + 4 progress)
+├── molecules/     (Card, EmptyState, InfoDialog, ConfirmDialog)
+├── organisms/     (HardwareCard, RecordingCard, MarkdownView)
+├── pages/         (Dashboard, Settings, Models, Logs, RecordingDetail)
+├── wizards/       (Onboarding 3-step)
+└── theme.{css,py} (design tokens centralizados)
+```
+App entry: `gui/app.py` — RecordoApp (Adw.Application) + RecordoWindow
+(Adw.NavigationView root). DashboardPage é a home; sub-pages são empilhadas
+via `nav_view.push()` e o usuário retorna com botão back nativo.
+
+### Tray (GTK3 separate process)
+Usa XApp (Cinnamon/Mint/MATE/Xfce) ou AyatanaAppIndicator3 (GNOME/Ubuntu).
+NÃO é GTK4 porque AppIndicator nunca foi portado. Comunica com daemon via
+`client.send_to_daemon()`.
+
+## Data flow durante uma gravação
+
+1. User aperta Super+R → `bin/gravar` → `recordo --toggle`
+2. Client conecta socket UNIX → daemon recebe comando 'toggle'
+3. Daemon spawna `recorder.py` que executa ffmpeg gravando microfone+sistema
+4. Hard cap em 4h ou max_segment (30min default — split automático)
+5. User aperta Super+R novamente → daemon para recorder, faz post_pipeline:
+   a. Concat segmentos → audio.opus em ~/Notas/<data>_<assunto>/
+   b. transcribe (whisper ou parakeet-onnx ou cohere) → transcricao.txt + .srt
+   c. summarize via Ollama (think mode toggleável) → summary.md
+   d. extract_tasks via LLM → tasks.md
+   e. extract_topics → topics.json
+   f. embed tudo em nota.md (markdown final com YAML frontmatter)
+6. GUI Dashboard exibe nova gravação no card; clique abre RecordingDetail
+   com tabs renderizadas em MarkdownView
+
+## Hardware preflight
+
+Antes de carregar modelo Whisper/Parakeet, `pipeline._do_transcribe_step`
+chama `hardware.preflight(backend)` que:
+1. Probes RAM disponível via psutil
+2. Compara com `models_registry.<backend>.ram_required_mb`
+3. Retorna `(False, msg)` se insuficiente
+4. Caller faz auto-fallback para Whisper-base (mais leve)
+
+## Tests structure
+
+```
+tests/
+├── test_*.py        (unit tests por módulo)
+└── e2e/
+    ├── test_smoke_pipeline.py     (pipeline com stub transcriber)
+    └── test_hardware_recommend.py (recomendações por hardware)
+```
+
+Markers:
+- `gui` — requer xvfb (GTK widget tests)
+- `e2e` — testes mais lentos (geram audio com ffmpeg)
 
 ## Decisões de design
 

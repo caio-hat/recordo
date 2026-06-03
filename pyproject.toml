@@ -70,4 +70,5 @@ addopts = "-v --tb=short"
 asyncio_mode = "auto"
 markers = [
     "gui: GUI smoke tests requiring display (use pytest -m 'not gui' to skip)",
+    "e2e: end-to-end tests (slower; require ffmpeg)",
 ]
