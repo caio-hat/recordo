@@ -7,7 +7,7 @@
 **Frictionless meeting recorder for Linux. _Record + Recordar._**
 
 [![CI](https://github.com/caio-hat/recordo/actions/workflows/ci.yml/badge.svg)](https://github.com/caio-hat/recordo/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: GPL-3.0](https://img.shields.io/badge/License-GPL_v3-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
 Apertou `Super+R`. Tá gravando. Apertou de novo. Salvou. Transcreveu sozinho. Em `~/Notas/`.
@@ -195,4 +195,6 @@ make shellcheck      # bash scripts
 
 ## License
 
-[MIT](LICENSE) — Caio Hat
+[GPL-3.0-only](LICENSE) — © 2026 Caio Hat. See [AUTHORS.md](AUTHORS.md) for credits.
+
+You may modify and redistribute Recordo under the terms of the GPL v3. Derivative works must remain open source under the same license. Original authorship must be preserved.

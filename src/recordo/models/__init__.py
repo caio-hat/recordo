@@ -131,6 +131,56 @@ def get_whisper_size_on_disk(model_id: str) -> int:
     return total
 
 
+# ── Parakeet ONNX (sherpa-onnx) ───────────────────────────────────────────────
+
+
+def is_parakeet_onnx_installed(
+    model_id: str = "istupakov/parakeet-tdt-0.6b-v3-onnx",
+) -> bool:
+    """Detecta Parakeet ONNX via cache HF."""
+    from ..transcribers.parakeet_onnx import is_installed
+
+    return is_installed(model_id)
+
+
+def download_parakeet_onnx(
+    model_id: str = "istupakov/parakeet-tdt-0.6b-v3-onnx",
+    *,
+    on_progress: ProgressCallback | None = None,
+    cancel_event: threading.Event | None = None,
+) -> bool:
+    """Baixa modelo Parakeet ONNX via HF snapshot."""
+    if on_progress:
+        on_progress(0.0, "Iniciando download Parakeet ONNX…")
+    if cancel_event and cancel_event.is_set():
+        return False
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError:
+        if on_progress:
+            on_progress(0.0, "huggingface_hub não instalado")
+        log.error("huggingface_hub indisponível")
+        return False
+    if on_progress:
+        on_progress(10.0, f"Baixando {model_id}…")
+    try:
+        snapshot_download(
+            repo_id=model_id,
+            cache_dir=str(HF_CACHE),
+            allow_patterns=["*.onnx", "*.txt", "*.yaml", "*.json"],
+        )
+    except Exception as e:
+        log.exception("download parakeet onnx falhou: %s", e)
+        if on_progress:
+            on_progress(0.0, f"Erro: {str(e)[:100]}")
+        return False
+    if cancel_event and cancel_event.is_set():
+        return False
+    if on_progress:
+        on_progress(100.0, "✓ Instalado")
+    return True
+
+
 # ── Parakeet (NeMo) ──────────────────────────────────────────────────────────
 
 

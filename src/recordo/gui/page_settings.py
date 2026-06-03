@@ -404,6 +404,73 @@ class SettingsPage(Gtk.ScrolledWindow):
         self.sum_ollama_ctx_row.set_value(ol_cfg.get("num_ctx", 32768))
         self._sum_ollama_group.add(self.sum_ollama_ctx_row)
 
+        # v0.2.4: Ollama advanced settings (ExpanderRow)
+        self._ollama_advanced = Adw.ExpanderRow(
+            title="Configurações avançadas",
+            subtitle="Ajustes finos do modelo — use os padrões se não tiver certeza",
+        )
+        self._sum_ollama_group.add(self._ollama_advanced)
+
+        self.ollama_think_row = Adw.SwitchRow(
+            title='Modo "pensar antes de responder"',
+            subtitle="Faz o modelo raciocinar passo a passo antes de gerar a resposta. "
+            "Resumos mais precisos, porém mais lentos. Funciona em Gemma 4, Qwen3, gpt-oss.",
+        )
+        self.ollama_think_row.set_active(bool(ol_cfg.get("think_enabled", True)))
+        self._ollama_advanced.add_row(self.ollama_think_row)
+
+        self.ollama_temp_row = Adw.SpinRow.new_with_range(0.0, 2.0, 0.1)
+        self.ollama_temp_row.set_title("Criatividade (temperature)")
+        self.ollama_temp_row.set_subtitle(
+            "0,0 = conservador e factual. 2,0 = criativo. Para resumos de reunião, 0,3-0,5 é ideal."
+        )
+        self.ollama_temp_row.set_digits(2)
+        self.ollama_temp_row.set_value(float(ol_cfg.get("temperature", 0.4)))
+        self._ollama_advanced.add_row(self.ollama_temp_row)
+
+        self.ollama_top_p_row = Adw.SpinRow.new_with_range(0.0, 1.0, 0.05)
+        self.ollama_top_p_row.set_title("Diversidade de palavras (top_p)")
+        self.ollama_top_p_row.set_subtitle(
+            "Filtra escolhas improváveis. 0,9 é o valor recomendado pela maioria dos modelos."
+        )
+        self.ollama_top_p_row.set_digits(2)
+        self.ollama_top_p_row.set_value(float(ol_cfg.get("top_p", 0.9)))
+        self._ollama_advanced.add_row(self.ollama_top_p_row)
+
+        self.ollama_top_k_row = Adw.SpinRow.new_with_range(1, 200, 1)
+        self.ollama_top_k_row.set_title("Variedade (top_k)")
+        self.ollama_top_k_row.set_subtitle(
+            "Quantas palavras candidatas o modelo considera a cada passo. 40 é o padrão."
+        )
+        self.ollama_top_k_row.set_value(int(ol_cfg.get("top_k", 40)))
+        self._ollama_advanced.add_row(self.ollama_top_k_row)
+
+        self.ollama_num_ctx_row = Adw.SpinRow.new_with_range(1024, 32768, 1024)
+        self.ollama_num_ctx_row.set_title("Janela de contexto (num_ctx)")
+        self.ollama_num_ctx_row.set_subtitle(
+            "Quantos tokens (≈palavras) o modelo lê de uma vez. "
+            "Aumente para reuniões longas (>1h). Padrão: 8192."
+        )
+        self.ollama_num_ctx_row.set_value(int(ol_cfg.get("num_ctx", 8192)))
+        self._ollama_advanced.add_row(self.ollama_num_ctx_row)
+
+        self.ollama_repeat_row = Adw.SpinRow.new_with_range(1.0, 2.0, 0.05)
+        self.ollama_repeat_row.set_title("Penalidade de repetição")
+        self.ollama_repeat_row.set_subtitle(
+            "Reduz repetições de palavras. 1,1 evita loops sem distorcer o texto."
+        )
+        self.ollama_repeat_row.set_digits(2)
+        self.ollama_repeat_row.set_value(float(ol_cfg.get("repeat_penalty", 1.1)))
+        self._ollama_advanced.add_row(self.ollama_repeat_row)
+
+        self.ollama_seed_row = Adw.SpinRow.new_with_range(0, 2147483647, 1)
+        self.ollama_seed_row.set_title("Semente (seed)")
+        self.ollama_seed_row.set_subtitle(
+            "0 = aleatório. Número fixo = mesma resposta para o mesmo input (útil para testes)."
+        )
+        self.ollama_seed_row.set_value(int(ol_cfg.get("seed", 0)))
+        self._ollama_advanced.add_row(self.ollama_seed_row)
+
         # ═════ Gemini group ═════
         self._sum_gemini_group = Adw.PreferencesGroup(
             title="✨ Google Gemini",
@@ -773,6 +840,13 @@ class SettingsPage(Gtk.ScrolledWindow):
             sum_cfg.setdefault("ollama", {})["model"] = self.sum_ollama_model_row.get_text()
             sum_cfg["ollama"]["host"] = self.sum_ollama_host_row.get_text()
             sum_cfg["ollama"]["num_ctx"] = int(self.sum_ollama_ctx_row.get_value())
+            # v0.2.4 advanced
+            sum_cfg["ollama"]["think_enabled"] = self.ollama_think_row.get_active()
+            sum_cfg["ollama"]["temperature"] = self.ollama_temp_row.get_value()
+            sum_cfg["ollama"]["top_p"] = self.ollama_top_p_row.get_value()
+            sum_cfg["ollama"]["top_k"] = int(self.ollama_top_k_row.get_value())
+            sum_cfg["ollama"]["repeat_penalty"] = self.ollama_repeat_row.get_value()
+            sum_cfg["ollama"]["seed"] = int(self.ollama_seed_row.get_value())
 
             sum_cfg.setdefault("gemini", {})["model"] = self.sum_gemini_model_row.get_text()
             sum_cfg["gemini"]["api_key"] = self.sum_gemini_key_row.get_text()

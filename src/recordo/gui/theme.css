@@ -1,0 +1,102 @@
+/* SPDX-License-Identifier: MIT
+ * Copyright © 2026 Caio Hat
+ * Recordo design tokens — Adwaita + identidade própria */
+
+/* ── Design tokens via @define-color ── */
+@define-color recordo_accent @accent_bg_color;
+@define-color recordo_recording @error_color;
+
+/* ── Atoms: Typography ── */
+.recordo-heading-1 { font-size: 18pt; font-weight: 800; }
+.recordo-heading-2 { font-size: 14pt; font-weight: 700; }
+.recordo-heading-3 { font-size: 12pt; font-weight: 600; }
+.recordo-caption { font-size: 10pt; opacity: 0.7; }
+
+/* ── Status badges ── */
+.recordo-status-badge {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 10pt;
+  font-weight: 600;
+}
+.recordo-status-badge.success { background: alpha(@success_color, 0.15); color: @success_color; }
+.recordo-status-badge.warning { background: alpha(@warning_color, 0.15); color: @warning_color; }
+.recordo-status-badge.error   { background: alpha(@error_color, 0.15);   color: @error_color; }
+.recordo-status-badge.info    { background: alpha(@accent_color, 0.15);  color: @accent_color; }
+.recordo-status-badge.neutral { background: alpha(@card_fg_color, 0.08); }
+
+/* ── Pulse dot (recording indicator) ── */
+.recordo-pulse-dot {
+  background: @error_color;
+  border-radius: 9999px;
+  min-width: 10px;
+  min-height: 10px;
+}
+
+/* ── Cards ── */
+.recordo-card {
+  background: @card_bg_color;
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid alpha(@borders, 0.3);
+}
+.recordo-card.elevated {
+  border: 1px solid alpha(@borders, 0.5);
+}
+.recordo-card.interactive:hover {
+  background: alpha(@accent_bg_color, 0.05);
+}
+.recordo-card.warning { border-left: 3px solid @warning_color; }
+.recordo-card.success { border-left: 3px solid @success_color; }
+.recordo-card.error   { border-left: 3px solid @error_color; }
+
+/* ── Hero button (start/stop big record) ── */
+.recordo-hero-button {
+  padding: 24px 48px;
+  font-size: 14pt;
+  font-weight: 700;
+  border-radius: 16px;
+  min-height: 80px;
+}
+.recordo-hero-button.recording {
+  background: @error_color;
+  color: @error_fg_color;
+}
+
+/* ── Empty states ── */
+.recordo-empty-state {
+  padding: 48px 24px;
+  opacity: 0.6;
+}
+.recordo-empty-state .recordo-empty-icon {
+  font-size: 48pt;
+  opacity: 0.5;
+}
+
+/* ── Step progress chips ── */
+.recordo-step-chip {
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: alpha(@card_fg_color, 0.08);
+}
+.recordo-step-chip.active {
+  background: @accent_bg_color;
+  color: @accent_fg_color;
+  font-weight: 600;
+}
+.recordo-step-chip.done {
+  background: alpha(@success_color, 0.15);
+  color: @success_color;
+}
+
+/* ── Sidebar / list rows ── */
+.recordo-recording-row {
+  padding: 12px 16px;
+}
+.recordo-recording-row .recordo-row-title {
+  font-weight: 600;
+}
+.recordo-recording-row .recordo-row-subtitle {
+  opacity: 0.7;
+  font-size: 10pt;
+}

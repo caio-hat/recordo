@@ -112,9 +112,12 @@ DEFAULTS: dict[str, Any] = {
         },
         "parakeet": {
             # v3 é multilingual (25 idiomas EU incluindo PT) com WER 6.34%
-            "model": "nvidia/parakeet-tdt-0.6b-v3",
+            "engine": "onnx",  # 'onnx' (default, leve) ou 'nemo' (legacy)
+            "model": "istupakov/parakeet-tdt-0.6b-v3-onnx",
+            "use_int8": True,
+            "num_threads": 4,
             "use_onnx": False,
-            # v0.2.3: chunking p/ áudio longo (evita OOM)
+            # v0.2.3: chunking p/ áudio longo (evita OOM no NeMo)
             "chunk_seconds": 600,  # 10min por chunk
             "chunk_overlap_seconds": 2.0,  # overlap entre chunks
         },
@@ -141,6 +144,12 @@ DEFAULTS: dict[str, Any] = {
             "temperature": 0.3,
             # A5: tempo de inatividade antes de descarregar modelo (libera VRAM/RAM)
             "idle_unload_seconds": 300,
+            # v0.2.4 advanced settings:
+            "think_enabled": True,
+            "top_p": 0.9,
+            "top_k": 40,
+            "repeat_penalty": 1.1,
+            "seed": 0,
         },
         "gemini": {
             "model": "gemini-2.5-flash",
@@ -214,6 +223,8 @@ DEFAULTS: dict[str, Any] = {
         "min_mic_duration_seconds": 8,
         "quiet_period_after_stop_minutes": 5,
         "poll_interval_seconds": 5,
+        # Tenta extrair nome da reunião do título da janela ativa
+        "auto_extract_name": True,
         # B2: popup persistente (notify-send -t 0 com action) em vez de auto-stop
         # quando silêncio prolongado for detectado. User decide.
         "popup_persistent": True,
@@ -232,6 +243,7 @@ DEFAULTS: dict[str, Any] = {
         "auto_tasks": False,  # opt-in mesmo no auto_run pq tasks é mais novo
     },
     "ui": {
+        "first_run": True,
         "theme": "auto",  # auto | light | dark
         "window_remember": True,
         "last_window_geometry": "",

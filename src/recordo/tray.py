@@ -36,18 +36,64 @@ from typing import Any
 
 import gi
 
-gi.require_version("Gtk", "3.0")
+# v0.2.4: defensive — em testes, Gtk 4.0 pode estar pre-carregado pelos atoms/molecules
+# require_version explode com ValueError se versão diferente já loaded.
+try:
+    gi.require_version("Gtk", "3.0")
+except ValueError:
+    pass  # Gtk 4 já carregado neste process; tray import torna-se no-op
 
-from gi.repository import GLib, Gtk  # noqa: E402
+from gi.repository import GLib, Gtk
 
-from .client import send_to_daemon  # noqa: E402
+from .client import is_daemon_alive, send_to_daemon
 
 log = logging.getLogger(__name__)
 
 POLL_INTERVAL_MS = 2000  # status refresh
 ICON_IDLE = "media-record"
-ICON_RECORDING = "media-record"
+ICON_RECORDING = "media-record-symbolic"
 SYMBOLIC_ICON = "recordo-symbolic"  # icone instalado em hicolor/symbolic/apps/
+
+
+def _query_state() -> dict:
+    """Pergunta status ao daemon. Retorna dict testável."""
+    if not is_daemon_alive():
+        return {
+            "alive": False,
+            "recording": False,
+            "subject": None,
+            "duration_s": 0,
+            "last_recordings": [],
+        }
+    resp = send_to_daemon("status")
+    if not resp.get("ok"):
+        return {
+            "alive": False,
+            "recording": False,
+            "subject": None,
+            "duration_s": 0,
+            "last_recordings": [],
+        }
+    out: dict = {
+        "alive": True,
+        "recording": bool(resp.get("recording", False)),
+        "subject": resp.get("subject"),
+        "duration_s": int(resp.get("duration_s", 0) or resp.get("elapsed_seconds", 0) or 0),
+        "last_recordings": [],
+    }
+    notas = Path.home() / "Notas"
+    if notas.exists():
+        try:
+            dirs = sorted(
+                (d for d in notas.iterdir() if d.is_dir()),
+                key=lambda d: d.stat().st_mtime,
+                reverse=True,
+            )[:5]
+            out["last_recordings"] = [str(d) for d in dirs]
+        except OSError:
+            pass
+    return out
+
 
 # ── Backend probe: XApp (preferido) ou Ayatana fallback ─────────────────────
 _BACKEND: str = "none"
@@ -699,12 +745,14 @@ class RecordoTray:
         return GLib.SOURCE_CONTINUE
 
     def _update_visuals(self, *, tooltip: str, status_label: str, toggle_label: str) -> None:
-        # Tooltip + ícone
+        # Tooltip + ícone (muda conforme estado)
+        icon_name = ICON_RECORDING if self.recording else SYMBOLIC_ICON
         if _BACKEND == "xapp":
             self.icon.set_tooltip_text(tooltip)  # type: ignore[union-attr]
+            self.icon.set_icon_name(icon_name)  # type: ignore[union-attr]
         elif _BACKEND == "ayatana":
             self.icon.set_title(tooltip)  # type: ignore[union-attr]
-            # AppIndicator não tem tooltip direto; o título funciona como hint
+            self.icon.set_icon_full(icon_name, tooltip)  # type: ignore[union-attr]
 
         # Items do menu
         if "status" in self.menu_items:

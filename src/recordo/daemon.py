@@ -23,6 +23,7 @@ from .config import (
     load_auto_detect_config,
     load_config,
 )
+from .meeting_name import extract_meeting_name
 from .notify import notify
 from .pipeline import post_pipeline
 from .recorder import Mark, Recorder, make_session, set_recorder_ref, write_report
@@ -675,7 +676,18 @@ class Daemon:
                 continue
             self._auto_detect_first_seen.clear()
             log.info("auto-detect: %s ativo — iniciando gravação", app)
-            await self._cmd_start({"auto": True, "subject": detect_subject()})
+            # Tenta extrair nome da reunião do título da janela
+            subject = None
+            if cfg.get("auto_extract_name", True):
+                try:
+                    subject = extract_meeting_name(detected_app=app)
+                    if subject:
+                        log.info("extraíu nome reunião do título: %s", subject)
+                except Exception:
+                    log.exception("extract_meeting_name falhou")
+            if not subject:
+                subject = detect_subject()
+            await self._cmd_start({"auto": True, "subject": subject})
 
     async def _pactl_subscribe_loop(self) -> None:
         """Roda `pactl subscribe`, marca evento quando há atividade source-output.

@@ -1246,12 +1246,61 @@ def _do_transcribe_step(
     if actual_backend is None:
         return {"ok": False, "step": "transcribe", "error": "transcrição indisponível"}
 
+    # v0.2.4: Hardware preflight check antes de carregar modelo
+    from . import hardware
+
+    preflight_backend = actual_backend
+    if actual_backend == "parakeet":
+        # Diferenciar ONNX vs NeMo via config para preflight
+        engine = (transcriber_cfg.get("parakeet", {}) or {}).get("engine", "onnx")
+        preflight_backend = "parakeet-onnx" if engine == "onnx" else "parakeet-nemo"
+
+    ok, preflight_msg = hardware.preflight(preflight_backend)
+    if not ok:
+        log.warning("preflight falhou para %s: %s", preflight_backend, preflight_msg)
+        # Auto-fallback Whisper se Parakeet não couber
+        if preflight_backend.startswith("parakeet"):
+            fallback = "whisper"
+            log.info("auto-fallback: Parakeet incompatível com hardware → Whisper")
+            actual_backend = fallback
+            ok2, msg2 = hardware.preflight("whisper-base")
+            if not ok2:
+                return {
+                    "ok": False,
+                    "step": "transcribe",
+                    "error": (
+                        f"{preflight_msg} Fallback para Whisper também falhou: {msg2}. "
+                        "Use Whisper-tiny ou backend Cohere (API)."
+                    ),
+                }
+        else:
+            return {"ok": False, "step": "transcribe", "error": preflight_msg}
+
     transcriber = get_transcriber(actual_backend, transcriber_cfg)
 
     # Bug fix v0.2.1: capturar erro de "model.bin not found" e dar mensagem útil
     # Bug fix v0.2.3: capturar UnicodeDecodeError ASCII codec (locale system não-UTF-8)
+    # v0.2.4: capturar MemoryError em runtime (preflight passou mas modelo cresceu)
     try:
         result = transcriber.transcribe(audio, language=language)
+    except MemoryError:
+        log.exception("MemoryError em %s — fallback para Whisper-base", actual_backend)
+        if actual_backend != "whisper":
+            try:
+                whisper_t = get_transcriber("whisper", transcriber_cfg)
+                result = whisper_t.transcribe(audio, language=language)
+            except Exception as e2:
+                return {
+                    "ok": False,
+                    "step": "transcribe",
+                    "error": f"Memória insuficiente para {actual_backend} e Whisper falhou: {e2}",
+                }
+        else:
+            return {
+                "ok": False,
+                "step": "transcribe",
+                "error": "Memória insuficiente até para Whisper. Use Whisper-tiny ou Cohere API.",
+            }
     except UnicodeDecodeError as e:
         log.exception("UnicodeDecodeError em transcribe — locale system mal configurado")
         return {

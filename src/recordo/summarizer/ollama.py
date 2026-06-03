@@ -132,6 +132,7 @@ Responda APENAS o JSON, sem comentários extras nem texto fora dele.
 class OllamaSummarizer(Summarizer):
     def __init__(self, config: dict[str, Any] | None = None):
         cfg = config or {}
+        self._cfg = cfg
         self.model: str = cfg.get("model", DEFAULT_MODEL)
         self.host: str = cfg.get("host", DEFAULT_HOST).rstrip("/")
         self.timeout: int = cfg.get("timeout_seconds", DEFAULT_TIMEOUT)
@@ -201,16 +202,31 @@ class OllamaSummarizer(Summarizer):
 
     def _call_ollama(self, prompt: str) -> str:
         """POST /api/generate com format=json. Retorna o campo `response`."""
-        payload = {
+        options: dict[str, Any] = {
+            "temperature": self.temperature,
+            "top_p": self._cfg.get("top_p", 0.9),
+            "top_k": self._cfg.get("top_k", 40),
+            "num_ctx": self.num_ctx,
+            "repeat_penalty": self._cfg.get("repeat_penalty", 1.1),
+        }
+        seed = self._cfg.get("seed", 0)
+        if seed != 0:
+            options["seed"] = int(seed)
+
+        payload: dict[str, Any] = {
             "model": self.model,
             "prompt": prompt,
             "stream": False,
-            "format": "json",  # força JSON válido (feature do Ollama)
-            "options": {
-                "temperature": self.temperature,  # baixa pra consistência (default 0.3)
-                "num_ctx": self.num_ctx,  # configurável: default 8192, gemma4 aguenta 32k+
-            },
+            "format": "json",
+            "options": options,
         }
+
+        # v0.2.4: think mode for models that support it
+        think_enabled = bool(self._cfg.get("think_enabled", True))
+        model_supports_think = any(self.model.startswith(prefix) for prefix in ("gemma4", "gpt-oss", "qwen3"))
+        if model_supports_think:
+            payload["think"] = think_enabled
+
         req = Request(
             f"{self.host}/api/generate",
             data=json.dumps(payload).encode("utf-8"),

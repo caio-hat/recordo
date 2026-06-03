@@ -34,9 +34,14 @@ def get_transcriber(backend: str, config: dict[str, Any]) -> Transcriber:
 
         return WhisperTranscriber(config.get("whisper", {}))
     if backend == "parakeet":
-        from .parakeet import ParakeetTranscriber
+        engine = (config.get("parakeet") or {}).get("engine", "onnx")
+        if engine == "nemo":
+            from .parakeet import ParakeetTranscriber
 
-        return ParakeetTranscriber(config.get("parakeet", {}))
+            return ParakeetTranscriber(config.get("parakeet", {}))
+        from .parakeet_onnx import ParakeetONNXTranscriber
+
+        return ParakeetONNXTranscriber(config.get("parakeet", {}))
     if backend == "cohere":
         from .cohere import CohereTranscriber
 

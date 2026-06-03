@@ -32,9 +32,10 @@ class TestModelsRegistry:
             assert info.languages
             assert info.description
 
-    def test_parakeet_models_use_nvidia_repo(self):
+    def test_parakeet_models_use_known_repo(self):
+        # v0.2.4: aceita nvidia/* (NeMo legado) e istupakov/* (ONNX preferred)
         for info in PARAKEET_MODELS.values():
-            assert info.full_id.startswith("nvidia/parakeet")
+            assert info.full_id.startswith(("nvidia/parakeet", "istupakov/parakeet"))
 
     def test_ollama_models_use_canonical_names(self):
         for info in OLLAMA_MODELS.values():
